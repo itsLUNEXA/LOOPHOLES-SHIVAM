@@ -6,10 +6,25 @@ from django.core.paginator import Paginator
 from django.contrib import messages
 from django.utils import timezone
 from django.db.models import Q
-from django.http import Http404
+from django.http import Http404, JsonResponse
 
-from .models import Event, WhatsAppSubmission, Category
+from .models import Event, WhatsAppSubmission, Category, EventEnrollment
 from .forms import EventForm, WhatsAppEventSubmissionForm
+from .services import trigger_visitor_entry_refresh, get_sync_status_summary
+from accounts.models import UserProfile
+
+
+def landing_page(request):
+    """
+    Opening landing page: clean, focused, 3-4 scrolling sections.
+    Initiates automatic background refresh on website entry per requirement 5.
+    Does not display event listings, cards, personal deadlines, or technical sync tables.
+    """
+    is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest'
+    if request.method == 'GET' and not is_ajax:
+        trigger_visitor_entry_refresh()
+    return render(request, 'landing.html')
+
 
 
 def event_list(request):
@@ -17,13 +32,21 @@ def event_list(request):
     Public event discovery listing.
     Only approved, upcoming, non-cancelled events are displayed.
     Supports keyword search, category, date-range, city/area, and free/paid filters.
+    Automatically enqueues non-blocking TinyFish source refresh on initial website entry.
     """
+    is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest'
+    sync_outcomes = []
+    if request.method == 'GET' and not is_ajax:
+        # Deliberate entry or full reload triggers refresh check across configured sources
+        sync_outcomes = trigger_visitor_entry_refresh()
+
     now = timezone.now()
     events = Event.objects.filter(
         review_status='approved',
-        event_status='scheduled',
-        end_datetime__gte=now
-    ).select_related('category', 'submitted_by').order_by('start_datetime')
+        event_status='scheduled'
+    ).filter(
+        Q(end_datetime__gte=now) | Q(end_datetime__isnull=True, start_datetime__gte=now)
+    ).select_related('category', 'submitted_by', 'source').order_by('start_datetime')
 
     # Query params
     q = request.GET.get('q', '').strip()
@@ -156,7 +179,29 @@ def event_list(request):
         'end_date': end_date_str,
         'has_filters': has_filters,
         'total_events_count': paginator.count,
+        'sync_status': get_sync_status_summary(),
+        'sync_outcomes': sync_outcomes,
     })
+
+
+def format_time_remaining(time_delta):
+    """Formats a timedelta into a concise human-readable remaining time string."""
+    total_seconds = int(time_delta.total_seconds())
+    if total_seconds <= 0:
+        return "Expired"
+    days = total_seconds // 86400
+    hours = (total_seconds % 86400) // 3600
+    minutes = (total_seconds % 3600) // 60
+
+    parts = []
+    if days > 0:
+        parts.append(f"{days} day{'s' if days != 1 else ''}")
+    if hours > 0 and days < 7:
+        parts.append(f"{hours} hr{'s' if hours != 1 else ''}")
+    if not parts or (days == 0 and hours == 0):
+        parts.append(f"{max(1, minutes)} min{'s' if minutes != 1 else ''}")
+
+    return ", ".join(parts) + " remaining"
 
 
 def event_detail(request, slug):
@@ -175,10 +220,114 @@ def event_detail(request, slug):
         else:
             raise Http404("Event not found or has not yet been approved.")
 
+    user_enrollment = None
+    if request.user.is_authenticated:
+        user_enrollment = EventEnrollment.objects.filter(user=request.user, event=event).first()
+
     return render(request, 'events/event_detail.html', {
         'event': event,
+        'user_enrollment': user_enrollment,
         'is_preview': False,
     })
+
+
+@login_required
+def event_enroll(request, slug):
+    """
+    Handles user enrollment and cancellation for an event.
+    """
+    event = get_object_or_404(Event, slug=slug, review_status='approved')
+    if request.method == 'POST':
+        action = request.POST.get('action', 'enroll')
+        enrollment, created = EventEnrollment.objects.get_or_create(
+            user=request.user,
+            event=event,
+            defaults={'status': 'confirmed'}
+        )
+        if not created:
+            if action == 'cancel':
+                enrollment.status = 'cancelled'
+                enrollment.save(update_fields=['status'])
+                messages.info(request, f"You have cancelled your enrollment for '{event.title}'.")
+            else:
+                enrollment.status = 'confirmed'
+                enrollment.save(update_fields=['status'])
+                messages.success(request, f"You have re-enrolled in '{event.title}'!")
+        else:
+            messages.success(request, f"You have successfully enrolled in '{event.title}'! You can track deadlines in your dashboard.")
+
+        next_target = request.POST.get('next') or request.GET.get('next')
+        if next_target and next_target.startswith('/') and not next_target.startswith('//'):
+            return redirect(next_target)
+        return redirect('events:event_detail', slug=event.slug)
+
+    return redirect('events:event_detail', slug=event.slug)
+
+
+@login_required
+def user_dashboard(request):
+    """
+    Personal user dashboard with 5 distinct sections:
+    - My Profile
+    - My Enrolled Events (all user's enrollments)
+    - Upcoming Events (from user's enrollments, not is_past)
+    - Deadlines (relevant future registration/submission deadlines, nearest first)
+    - Explore Events CTA
+
+    Plus a compact red deadline reminder at top for the nearest future deadline.
+    """
+    profile, _ = UserProfile.objects.get_or_create(user=request.user)
+    now = timezone.now()
+
+    # Query all enrollments for this user
+    all_enrollments = EventEnrollment.objects.filter(
+        user=request.user
+    ).select_related('event', 'event__category', 'event__source').order_by('-enrolled_at')
+
+    # Confirmed active enrollments
+    confirmed_enrollments = [e for e in all_enrollments if e.status == 'confirmed']
+
+    # Upcoming events from active enrollments (not is_past and event_status == 'scheduled')
+    upcoming_events = [
+        e.event for e in confirmed_enrollments
+        if e.event.event_status == 'scheduled' and not e.event.is_past
+    ]
+    upcoming_events.sort(key=lambda ev: ev.start_datetime)
+
+    # Deadlines: relevant future registration/submission deadlines among enrolled upcoming events
+    # Rule: Do not substitute event start time for a missing deadline.
+    # Rule: Do not invent missing deadline data.
+    # Rule: Exclude passed deadlines, other users' enrollments, and cancelled records.
+    deadlines_list = []
+    for enr in confirmed_enrollments:
+        ev = enr.event
+        if ev.event_status == 'scheduled' and not ev.is_past and ev.registration_deadline:
+            if ev.registration_deadline > now:
+                time_remaining = ev.registration_deadline - now
+                deadlines_list.append({
+                    'enrollment': enr,
+                    'event': ev,
+                    'deadline': ev.registration_deadline,
+                    'deadline_type': ev.effective_deadline_type,
+                    'remaining_display': format_time_remaining(time_remaining),
+                    'time_remaining': time_remaining,
+                })
+
+    # Sort nearest first (ascending by deadline timestamp)
+    deadlines_list.sort(key=lambda d: d['deadline'])
+
+    # Compact red reminder is the nearest future deadline
+    nearest_deadline = deadlines_list[0] if deadlines_list else None
+
+    return render(request, 'events/user_dashboard.html', {
+        'profile': profile,
+        'all_enrollments': all_enrollments,
+        'confirmed_enrollments': confirmed_enrollments,
+        'upcoming_events': upcoming_events,
+        'deadlines_list': deadlines_list,
+        'nearest_deadline': nearest_deadline,
+    })
+
 
 
 @login_required
@@ -383,3 +532,12 @@ def whatsapp_submission_create(request):
         'form': form,
         'title': 'Submit a WhatsApp Event',
     })
+
+
+def sync_status_api(request):
+    """
+    Returns JSON status of TinyFish synchronization runs.
+    Used by the frontend to poll for live refresh updates without full page reloads.
+    """
+    data = get_sync_status_summary()
+    return JsonResponse(data)

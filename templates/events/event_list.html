@@ -128,6 +128,17 @@
   </div>
 </div>
 
+<!-- Live Sync Status Banner -->
+<div id="sync-status-container" class="container mb-3" style="display: none;">
+  <div id="sync-banner" class="alert d-flex align-items-center justify-content-between p-3 rounded-4 shadow-sm" role="alert">
+    <div class="d-flex align-items-center gap-2">
+      <span id="sync-spinner" class="spinner-border spinner-border-sm text-primary" role="status"></span>
+      <span id="sync-message" class="fw-semibold small">Refreshing community events from configured sources...</span>
+    </div>
+    <div id="sync-action"></div>
+  </div>
+</div>
+
 <!-- Events Grid Section -->
 <div class="container mb-5">
   {% if events %}
@@ -172,6 +183,10 @@
                 {% if event.source_type == 'whatsapp' %}
                   <span class="badge badge-whatsapp-source rounded-pill" title="Submitted manually from a WhatsApp announcement">
                     <i class="bi bi-whatsapp"></i> WhatsApp
+                  </span>
+                {% elif event.source_type == 'external' %}
+                  <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle rounded-pill" title="Imported from configured external source (not independently verified)">
+                    <i class="bi bi-robot"></i> TinyFish Import
                   </span>
                 {% else %}
                   <span class="badge badge-organizer-source rounded-pill">
@@ -270,4 +285,67 @@
     </div>
   {% endif %}
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const container = document.getElementById('sync-status-container');
+  const banner = document.getElementById('sync-banner');
+  const spinner = document.getElementById('sync-spinner');
+  const message = document.getElementById('sync-message');
+  const action = document.getElementById('sync-action');
+
+  let pollingInterval = null;
+  let isSyncing = {{ sync_status.is_syncing|yesno:"true,false" }};
+
+  function updateSyncUI(data) {
+    if (!container || !banner || !spinner || !message || !action) return;
+
+    if (data.is_syncing) {
+      container.style.display = 'block';
+      banner.className = 'alert alert-info d-flex align-items-center justify-content-between p-3 rounded-4 shadow-sm';
+      spinner.style.display = 'inline-block';
+      message.textContent = 'Refreshing events, hackathons & competitions from configured partner sources in the background...';
+      action.innerHTML = '';
+    } else if (data.last_status === 'COMPLETED' && data.records_created > 0) {
+      container.style.display = 'block';
+      banner.className = 'alert alert-success d-flex align-items-center justify-content-between p-3 rounded-4 shadow-sm';
+      spinner.style.display = 'none';
+      message.innerHTML = '<span><strong>' + data.records_created + '</strong> new community listing(s) imported from configured sources!</span>';
+      action.innerHTML = '<button onclick="window.location.reload();" class="btn btn-sm btn-success rounded-pill px-3 fw-semibold">View Updates &rarr;</button>';
+      if (pollingInterval) clearInterval(pollingInterval);
+    } else if (data.last_status === 'RATE_LIMITED') {
+      container.style.display = 'block';
+      banner.className = 'alert alert-secondary d-flex align-items-center justify-content-between p-3 rounded-4 shadow-sm';
+      spinner.style.display = 'none';
+      message.textContent = data.error_message || 'Daily API refresh limit reached for configured source. Displaying saved events.';
+      action.innerHTML = '';
+      if (pollingInterval) clearInterval(pollingInterval);
+    } else if (data.last_status === 'FAILED') {
+      container.style.display = 'block';
+      banner.className = 'alert alert-warning d-flex align-items-center justify-content-between p-3 rounded-4 shadow-sm';
+      spinner.style.display = 'none';
+      message.textContent = 'Background sync note: ' + (data.error_message || 'Source refresh failed') + '. Saved events preserved.';
+      action.innerHTML = '';
+      if (pollingInterval) clearInterval(pollingInterval);
+    } else {
+      if (!isSyncing) {
+        container.style.display = 'none';
+      }
+    }
+  }
+
+  // Poll status endpoint if sync is currently in-flight
+  if (isSyncing) {
+    updateSyncUI({ is_syncing: true });
+    pollingInterval = setInterval(function() {
+      fetch('{% url "events:sync_status_api" %}', {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      })
+      .then(response => response.json())
+      .then(data => updateSyncUI(data))
+      .catch(err => console.log('Sync status poll error:', err));
+    }, 3000);
+  }
+});
+</script>
 {% endblock %}

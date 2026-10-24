@@ -1,6 +1,6 @@
 <nav class="navbar navbar-expand-lg custom-nav sticky-top">
   <div class="container">
-    <a class="navbar-brand d-flex align-items-center gap-2" href="{% url 'events:event_list' %}">
+    <a class="navbar-brand d-flex align-items-center gap-2" href="{% url 'events:landing' %}">
       <i class="bi bi-geo-alt-fill text-primary fs-4"></i>
       <span class="navbar-brand-gradient fs-4">Vibento</span>
     </a>
@@ -18,8 +18,13 @@
         </li>
         {% if user.is_authenticated %}
         <li class="nav-item">
+          <a class="nav-link fw-semibold px-3" href="{% url 'events:user_dashboard' %}">
+            <i class="bi bi-person-workspace me-1"></i> My Dashboard
+          </a>
+        </li>
+        <li class="nav-item">
           <a class="nav-link fw-semibold px-3" href="{% url 'events:organizer_dashboard' %}">
-            <i class="bi bi-grid-1x2 me-1"></i> Organizer Dashboard
+            <i class="bi bi-grid-1x2 me-1"></i> Organizer
           </a>
         </li>
         {% if user.is_staff %}
@@ -69,13 +74,18 @@
               </li>
               <li><hr class="dropdown-divider"></li>
               <li>
+                <a class="dropdown-item py-2 fw-semibold" href="{% url 'events:user_dashboard' %}">
+                  <i class="bi bi-person-workspace me-2 text-primary"></i> My Dashboard
+                </a>
+              </li>
+              <li>
                 <a class="dropdown-item py-2" href="{% url 'accounts:profile' %}">
-                  <i class="bi bi-sliders me-2 text-primary"></i> Profile & Preferences
+                  <i class="bi bi-sliders me-2 text-secondary"></i> Profile & Preferences
                 </a>
               </li>
               <li>
                 <a class="dropdown-item py-2" href="{% url 'events:organizer_dashboard' %}">
-                  <i class="bi bi-collection me-2 text-info"></i> My Submissions
+                  <i class="bi bi-collection me-2 text-info"></i> Organizer Submissions
                 </a>
               </li>
               {% if user.is_staff %}

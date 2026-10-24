@@ -52,6 +52,10 @@
             <span class="badge badge-whatsapp-source rounded-pill px-3 py-2">
               <i class="bi bi-whatsapp"></i> WhatsApp Sourced
             </span>
+          {% elif event.source_type == 'external' %}
+            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle rounded-pill px-3 py-2" title="Extracted from configured external source (not independently verified)">
+              <i class="bi bi-robot"></i> TinyFish Import (Unverified Source)
+            </span>
           {% endif %}
           {% if event.is_free %}
             <span class="badge bg-success rounded-pill px-3 py-2">Free Admission</span>
@@ -80,14 +84,26 @@
           {{ event.description }}
         </div>
 
-        <!-- External Source Reference if present -->
+        <!-- External Source Reference & Attribution -->
         {% if event.original_source_url %}
-          <div class="p-3 bg-light rounded-3 small text-muted border">
-            <i class="bi bi-link-45deg me-1"></i>
-            Original announcement link:
-            <a href="{{ event.original_source_url }}" target="_blank" rel="noopener noreferrer" class="text-truncate d-inline-block align-middle" style="max-width: 400px;">
-              {{ event.original_source_url }}
-            </a>
+          <div class="p-3 bg-light rounded-3 small text-muted border mb-4">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+              <div>
+                <i class="bi bi-link-45deg me-1"></i>
+                Source URL:
+                <a href="{{ event.original_source_url }}" target="_blank" rel="noopener noreferrer" class="text-truncate d-inline-block align-middle fw-semibold" style="max-width: 400px;">
+                  {{ event.original_source_url }}
+                </a>
+              </div>
+              {% if event.source_checked_at %}
+                <div class="text-muted">
+                  <i class="bi bi-clock-history me-1"></i> Source Checked: {{ event.source_checked_at|date:"M d, Y • h:i A" }}
+                </div>
+              {% endif %}
+            </div>
+            <div class="mt-2 text-secondary" style="font-size: 0.78rem;">
+              <i class="bi bi-info-circle me-1"></i> Extracted via automated web agent from configured partner source. Details are subject to organizer change and not independently verified by Vibento staff.
+            </div>
           </div>
         {% endif %}
       </div>
@@ -146,6 +162,44 @@
           <div class="text-muted small mt-2 text-center" style="font-size: 0.78rem;">
             External registration. This platform does not process ticketing or fees.
           </div>
+        </div>
+
+        <!-- Vibento In-App Enrollment & Deadline Tracking -->
+        <div class="card border rounded-3 p-3 bg-light mb-4">
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <span class="small fw-bold text-dark">
+              <i class="bi bi-bookmark-check text-primary me-1"></i> Vibento Enrollment
+            </span>
+            {% if user_enrollment and user_enrollment.status == 'confirmed' %}
+              <span class="badge bg-success-subtle text-success border border-success-subtle">
+                <i class="bi bi-check-circle me-1"></i>Enrolled
+              </span>
+            {% endif %}
+          </div>
+          <p class="text-muted small mb-2" style="font-size: 0.8rem;">
+            Save this event to your dashboard to track registration & submission deadlines.
+          </p>
+          {% if user.is_authenticated %}
+            <form action="{% url 'events:event_enroll' slug=event.slug %}" method="post">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.path }}">
+              {% if user_enrollment and user_enrollment.status == 'confirmed' %}
+                <input type="hidden" name="action" value="cancel">
+                <button type="submit" class="btn btn-outline-danger btn-sm w-100 rounded-pill">
+                  <i class="bi bi-x-circle me-1"></i> Cancel Enrollment
+                </button>
+              {% else %}
+                <input type="hidden" name="action" value="enroll">
+                <button type="submit" class="btn btn-outline-primary btn-sm w-100 rounded-pill fw-semibold">
+                  <i class="bi bi-bookmark-plus me-1"></i> Enroll & Track Deadlines
+                </button>
+              {% endif %}
+            </form>
+          {% else %}
+            <a href="{% url 'accounts:login' %}?next={{ request.path }}" class="btn btn-outline-primary btn-sm w-100 rounded-pill">
+              Sign In to Enroll
+            </a>
+          {% endif %}
         </div>
 
         <hr>

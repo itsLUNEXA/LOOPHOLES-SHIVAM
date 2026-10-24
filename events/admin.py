@@ -6,7 +6,8 @@ from django.utils import timezone
 from django.utils.html import format_html
 from django.urls import reverse
 from django import forms
-from .models import Category, Event, WhatsAppSubmission
+from .models import Category, Event, WhatsAppSubmission, EventSource, SyncRunHistory, EventEnrollment
+from .services import execute_source_sync
 from .tinyfish import (
     get_tinyfish_config,
     fetch_events_from_tinyfish,
@@ -602,3 +603,189 @@ class WhatsAppSubmissionAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+@admin.register(EventSource)
+class EventSourceAdmin(admin.ModelAdmin):
+    list_display = [
+        'name',
+        'source_url',
+        'content_type',
+        'is_enabled',
+        'sync_status_badge',
+        'last_sync_attempt_at',
+        'last_successful_sync_at',
+        'next_due_at',
+        'runs_today_count',
+        'consecutive_failures',
+    ]
+    list_filter = ['is_enabled', 'sync_status', 'content_type', 'auto_approve_trusted']
+    search_fields = ['name', 'source_url', 'last_error_message']
+    readonly_fields = [
+        'last_sync_attempt_at',
+        'last_successful_sync_at',
+        'next_due_at',
+        'sync_status',
+        'active_run_id',
+        'concurrency_lock_until',
+        'concurrency_lock_token',
+        'consecutive_failures',
+        'runs_today_count',
+        'last_run_date',
+        'last_error_message',
+        'created_at',
+        'updated_at',
+    ]
+    fieldsets = (
+        ("Source Identity & URL", {
+            'fields': ('name', 'source_url', 'content_type', 'is_enabled')
+        }),
+        ("Category & Moderation Policy", {
+            'fields': ('default_category', 'category_mappings', 'auto_approve_trusted')
+        }),
+        ("Schedule & Rate Limits", {
+            'fields': ('freshness_interval_minutes', 'daily_run_limit', 'max_retries')
+        }),
+        ("Current Sync Status & Concurrency Lock", {
+            'fields': (
+                'sync_status',
+                'active_run_id',
+                'last_sync_attempt_at',
+                'last_successful_sync_at',
+                'next_due_at',
+                'runs_today_count',
+                'last_run_date',
+                'consecutive_failures',
+                'concurrency_lock_until',
+                'last_error_message',
+            )
+        }),
+    )
+    actions = ['trigger_sync_now', 'reset_concurrency_lock', 'enable_sources', 'disable_sources']
+
+    def sync_status_badge(self, obj):
+        colors = {
+            'idle': '#64748b',
+            'queued': '#d97706',
+            'running': '#2563eb',
+            'completed': '#16a34a',
+            'failed': '#dc2626',
+        }
+        color = colors.get(obj.sync_status, '#64748b')
+        return format_html(
+            '<span style="background: {}; color: white; padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 0.75rem;">{}</span>',
+            color,
+            obj.get_sync_status_display()
+        )
+    sync_status_badge.short_description = "Status"
+
+    @admin.action(description="Sync selected sources now (Run worker)")
+    def trigger_sync_now(self, request, queryset):
+        count = 0
+        for source in queryset.filter(is_enabled=True):
+            res = execute_source_sync(source.pk, trigger_type='admin_manual', user=request.user)
+            if res.get('success'):
+                self.message_user(request, f"Source '{source.name}' synced: {res.get('records_created')} created, {res.get('duplicates_skipped')} skipped.", messages.SUCCESS)
+                count += 1
+            else:
+                self.message_user(request, f"Source '{source.name}' sync failed: {res.get('error')}", messages.ERROR)
+        if count == 0 and not queryset.filter(is_enabled=True).exists():
+            self.message_user(request, "Selected source(s) are disabled.", messages.WARNING)
+
+    @admin.action(description="Reset Concurrency Lock & Status to Idle")
+    def reset_concurrency_lock(self, request, queryset):
+        updated = queryset.update(
+            sync_status='idle',
+            concurrency_lock_until=None,
+            concurrency_lock_token=None,
+            active_run_id=None
+        )
+        self.message_user(request, f"Reset concurrency lock and status for {updated} source(s).", messages.SUCCESS)
+
+    @admin.action(description="Enable selected sources")
+    def enable_sources(self, request, queryset):
+        updated = queryset.update(is_enabled=True)
+        self.message_user(request, f"Enabled {updated} source(s).")
+
+    @admin.action(description="Disable selected sources")
+    def disable_sources(self, request, queryset):
+        updated = queryset.update(is_enabled=False)
+        self.message_user(request, f"Disabled {updated} source(s).")
+
+
+@admin.register(SyncRunHistory)
+class SyncRunHistoryAdmin(admin.ModelAdmin):
+    list_display = [
+        'source',
+        'trigger_type',
+        'status_badge',
+        'run_id',
+        'records_extracted_count',
+        'records_created_count',
+        'records_skipped_count',
+        'records_rejected_count',
+        'started_at',
+        'completed_at',
+    ]
+    list_filter = ['status', 'trigger_type', 'started_at', 'source']
+    search_fields = ['source__name', 'run_id', 'error_message']
+    readonly_fields = [
+        'source',
+        'run_id',
+        'trigger_type',
+        'status',
+        'started_at',
+        'completed_at',
+        'records_extracted_count',
+        'records_created_count',
+        'records_updated_count',
+        'records_skipped_count',
+        'records_rejected_count',
+        'error_message',
+        'diagnostic_details',
+    ]
+
+    def status_badge(self, obj):
+        colors = {
+            'PENDING': '#d97706',
+            'RUNNING': '#2563eb',
+            'COMPLETED': '#16a34a',
+            'FAILED': '#dc2626',
+            'TIMEOUT': '#ea580c',
+            'RATE_LIMITED': '#9333ea',
+        }
+        color = colors.get(obj.status, '#64748b')
+        return format_html(
+            '<span style="background: {}; color: white; padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 0.75rem;">{}</span>',
+            color,
+            obj.status
+        )
+    status_badge.short_description = "Status"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+
+@admin.register(EventEnrollment)
+class EventEnrollmentAdmin(admin.ModelAdmin):
+    list_display = ['user', 'event', 'status_badge', 'enrolled_at']
+    list_filter = ['status', 'enrolled_at']
+    search_fields = ['user__email', 'user__username', 'event__title', 'notes']
+    raw_id_fields = ['user', 'event']
+    readonly_fields = ['enrolled_at']
+
+    def status_badge(self, obj):
+        colors = {
+            'confirmed': '#16a34a',
+            'cancelled': '#dc2626',
+        }
+        color = colors.get(obj.status, '#64748b')
+        return format_html(
+            '<span style="background: {}; color: white; padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 0.75rem;">{}</span>',
+            color,
+            obj.get_status_display()
+        )
+    status_badge.short_description = "Status"

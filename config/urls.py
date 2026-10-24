@@ -3,16 +3,15 @@ from django.contrib.auth.models import User
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
-from events.models import Event, WhatsAppSubmission
+from events.models import Event, WhatsAppSubmission, EventSource, SyncRunHistory, EventEnrollment
+from django.contrib import messages
+from django.shortcuts import redirect
+from django.urls import reverse
 
 # Customized Django Admin Site Branding
 admin.site.site_header = "Vibento Administration"
 admin.site.site_title = "Vibento Admin Portal"
 admin.site.index_title = "Central Moderation & Management Dashboard"
-
-from django.contrib import messages
-from django.shortcuts import redirect
-from django.urls import reverse
 
 # Hook admin.site.index to inject live database counts into dashboard respecting permissions
 original_admin_index = admin.site.index
@@ -22,27 +21,53 @@ def custom_admin_index(request, extra_context=None):
     extra_context = extra_context or {}
     counts = {}
 
+    is_staff_or_super = request.user.is_superuser or request.user.is_staff
+
     # User count (respecting admin permissions)
-    if request.user.has_perm('auth.view_user') or request.user.is_superuser or request.user.is_staff:
+    if is_staff_or_super or request.user.has_perm('auth.view_user'):
         counts['users'] = User.objects.count()
     else:
         counts['users'] = '-'
 
     # Event counts (respecting admin permissions)
-    if request.user.has_perm('events.view_event') or request.user.is_superuser or request.user.is_staff:
+    if is_staff_or_super or request.user.has_perm('events.view_event'):
         counts['events_total'] = Event.objects.count()
         counts['events_pending'] = Event.objects.filter(review_status='pending').count()
         counts['events_approved'] = Event.objects.filter(review_status='approved').count()
+        counts['events_correction'] = Event.objects.filter(review_status='correction').count()
+        counts['events_rejected'] = Event.objects.filter(review_status='rejected').count()
+        extra_context['recent_events'] = Event.objects.select_related('category', 'submitted_by', 'source').order_by('-created_at')[:6]
     else:
         counts['events_total'] = '-'
         counts['events_pending'] = '-'
         counts['events_approved'] = '-'
+        counts['events_correction'] = '-'
+        counts['events_rejected'] = '-'
+        extra_context['recent_events'] = []
 
     # WhatsApp count (respecting admin permissions)
-    if request.user.has_perm('events.view_whatsappsubmission') or request.user.is_superuser or request.user.is_staff:
+    if is_staff_or_super or request.user.has_perm('events.view_whatsappsubmission'):
         counts['whatsapp_submissions'] = WhatsAppSubmission.objects.count()
     else:
         counts['whatsapp_submissions'] = '-'
+
+    # Enrollments count
+    if is_staff_or_super or request.user.has_perm('events.view_eventenrollment'):
+        counts['enrollments'] = EventEnrollment.objects.count()
+    else:
+        counts['enrollments'] = '-'
+
+    # TinyFish Sync details
+    if is_staff_or_super or request.user.has_perm('events.view_eventsource'):
+        counts['sources'] = EventSource.objects.count()
+        counts['active_runs'] = SyncRunHistory.objects.filter(status__in=['PENDING', 'RUNNING']).count()
+        extra_context['configured_sources'] = EventSource.objects.all().order_by('name')[:10]
+        extra_context['recent_sync_runs'] = SyncRunHistory.objects.select_related('source').order_by('-started_at')[:8]
+    else:
+        counts['sources'] = '-'
+        counts['active_runs'] = '-'
+        extra_context['configured_sources'] = []
+        extra_context['recent_sync_runs'] = []
 
     extra_context['counts'] = counts
     return original_admin_index(request, extra_context=extra_context)

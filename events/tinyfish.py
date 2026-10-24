@@ -110,7 +110,7 @@ def normalize_url(url: str) -> str:
     return clean
 
 
-def fetch_events_from_tinyfish(source_url: str, sync_mode: str = 'async'):
+def fetch_events_from_tinyfish(source_url: str, sync_mode: str = 'async', content_type: str = 'events'):
     """
     Calls official TinyFish Agent API to extract structured events.
     Uses async-first flow (POST /v1/automation/run-async) by default.
@@ -152,16 +152,37 @@ def fetch_events_from_tinyfish(source_url: str, sync_mode: str = 'async'):
     else:
         api_key = os.getenv('TINYFISH_API_KEY', '').strip()
 
-    payload = {
-        "url": source_url,
-        "goal": (
-            "Extract all upcoming public community event listings from this page. "
+    if content_type == 'hackathons':
+        goal = (
+            "Extract all upcoming hackathons, coding sprints, and builder challenges from this page. "
+            "For each listing, accurately extract: title, description, start_datetime (ISO 8601), "
+            "end_datetime (ISO 8601 if specified), venue, city, area, address, organizer_name, "
+            "category_hints (e.g. Hackathon, Coding, Web3, AI), intended_audience, is_free, price, registration_url, "
+            "registration_deadline, original_event_page_url, and status. "
+            "Do NOT invent dates, times, venues, prices, or links. Missing values must be null."
+        )
+    elif content_type == 'competitions':
+        goal = (
+            "Extract all upcoming competitions, challenges, and pitch contests from this page. "
+            "For each listing, accurately extract: title, description, start_datetime (ISO 8601), "
+            "end_datetime (ISO 8601 if specified), venue, city, area, address, organizer_name, "
+            "category_hints (e.g. Competition, Contest, Startup, Pitch), intended_audience, is_free, price, registration_url, "
+            "registration_deadline, original_event_page_url, and status. "
+            "Do NOT invent dates, times, venues, prices, or links. Missing values must be null."
+        )
+    else:
+        goal = (
+            "Extract all upcoming public community event listings, hackathons, and competitions from this page. "
             "For each event, accurately extract: title, description, start_datetime (ISO 8601), "
             "end_datetime (ISO 8601 if specified), venue, city, area, address, organizer_name, "
             "category_hints, intended_audience, is_free, price, registration_url, "
             "registration_deadline, original_event_page_url, and status. "
             "Do NOT invent dates, times, venues, prices, or links. Missing values must be null."
-        ),
+        )
+
+    payload = {
+        "url": source_url,
+        "goal": goal,
         "output_schema": TINYFISH_OUTPUT_SCHEMA,
         "browser_profile": "lite",
     }
@@ -424,8 +445,23 @@ def parse_and_validate_datetime(dt_str: str):
     return None
 
 
-def match_category(category_hint: str):
-    """Matches category hint to existing Category or falls back to default."""
+def match_category(category_hint: str = None, category_mappings: dict = None, default_category = None):
+    """
+    Matches category hint against:
+    1. Explicit keyword/tag category mappings dict
+    2. Direct name or slug match
+    3. Substring match against existing categories
+    4. Default category configured on source
+    5. First existing category in DB
+    """
+    if category_hint and category_mappings and isinstance(category_mappings, dict):
+        hint_clean = str(category_hint).strip().lower()
+        for kw, target_slug in category_mappings.items():
+            if kw.lower() in hint_clean:
+                cat = Category.objects.filter(slug__iexact=target_slug).first() or Category.objects.filter(name__iexact=target_slug).first()
+                if cat:
+                    return cat
+
     if category_hint:
         hint_clean = str(category_hint).strip().lower()
         cat = Category.objects.filter(name__iexact=hint_clean).first()
@@ -438,6 +474,9 @@ def match_category(category_hint: str):
             if existing.name.lower() in hint_clean or hint_clean in existing.name.lower():
                 return existing
 
+    if default_category:
+        return default_category
+
     # Fallback to first existing category or create a 'Community' category
     fallback = Category.objects.first()
     if not fallback:
@@ -445,10 +484,10 @@ def match_category(category_hint: str):
     return fallback
 
 
-def validate_and_import_events(raw_events, source_url: str, user: User):
+def validate_and_import_events(raw_events, source_url: str, user: User, source=None, auto_approve: bool = False, default_category=None, category_mappings: dict = None):
     """
     Validates extracted event data, performs duplicate & change detection,
-    and creates pending external event drafts.
+    and creates pending or auto-approved external event drafts.
     
     Returns structured results summary.
     """
@@ -653,7 +692,11 @@ def validate_and_import_events(raw_events, source_url: str, user: User):
             continue
 
         # 7. Other fields & category
-        category = match_category(item.get('category_hints'))
+        category = match_category(
+            item.get('category_hints'),
+            category_mappings=category_mappings,
+            default_category=default_category
+        )
         intended_audience = str(item.get('intended_audience') or 'All Audiences').strip()
         valid_audiences = [c[0] for c in Event.INTENDED_AUDIENCE_CHOICES]
         if intended_audience not in valid_audiences:
@@ -664,7 +707,12 @@ def validate_and_import_events(raw_events, source_url: str, user: User):
 
         event_status = 'cancelled' if str(item.get('status') or '').lower() == 'cancelled' else 'scheduled'
 
-        # 8. Create new pending Event
+        review_status = 'approved' if auto_approve else 'pending'
+        reviewed_at = now if auto_approve else None
+        reviewed_by = user if auto_approve else None
+        reviewer_feedback = f"Automated import from trusted source {source.name if source else source_url}" if auto_approve else ""
+
+        # 8. Create new Event
         try:
             new_event = Event.objects.create(
                 title=title,
@@ -683,12 +731,18 @@ def validate_and_import_events(raw_events, source_url: str, user: User):
                 price=price,
                 registration_url=registration_url,
                 source_type='external',
+                source=source,
                 original_source_url=original_source_url,
                 source_checked_at=now,
-                review_status='pending',
+                review_status=review_status,
+                reviewed_at=reviewed_at,
+                reviewed_by=reviewed_by,
+                reviewer_feedback=reviewer_feedback,
                 event_status=event_status,
             )
             summary['new_pending_created'] += 1
+            if auto_approve:
+                summary['new_approved_created'] = summary.get('new_approved_created', 0) + 1
             summary['created_events'].append({
                 'id': new_event.pk,
                 'title': new_event.title,

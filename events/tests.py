@@ -3,7 +3,8 @@ from django.test import TestCase, Client
 from django.contrib.auth.models import User
 from django.utils import timezone
 from django.urls import reverse
-from .models import Category, Event, WhatsAppSubmission
+from .models import Category, Event, WhatsAppSubmission, EventSource, SyncRunHistory, EventEnrollment
+from .services import trigger_visitor_entry_refresh, execute_source_sync, get_sync_status_summary
 
 
 class EventManagementAndDiscoveryTests(TestCase):
@@ -1094,5 +1095,606 @@ class TinyFishEventSyncTests(TestCase):
         self.assertContains(res, "Check Result for Run run_preserve_999")
 
 
+class AutomatedWebsiteEntrySyncTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.now = timezone.now()
+        self.admin = User.objects.create_superuser(
+            username='entry_admin',
+            email='admin@entrytest.local',
+            password='AdminPassEntry123!'
+        )
+        self.cat_tech = Category.objects.create(name='Technology & AI', slug='technology-ai')
+        self.cat_startups = Category.objects.create(name='Startups & Business', slug='startups-business')
 
+        self.source = EventSource.objects.create(
+            name="Bangalore Open Tech Community",
+            source_url="https://example-community.org/events",
+            content_type="events",
+            default_category=self.cat_tech,
+            is_enabled=True,
+            freshness_interval_minutes=360,
+            daily_run_limit=10,
+            runs_today_count=0
+        )
+
+        self.event_list_url = reverse('events:event_list')
+        self.sync_api_url = reverse('events:sync_status_api')
+
+    @override_settings(
+        TINYFISH_API_KEY='sk-test-tinyfish-key-12345',
+        TINYFISH_ALLOWED_SOURCE_URL='https://example-community.org/events',
+        TINYFISH_ALLOWED_SOURCES=['https://example-community.org/events']
+    )
+    def test_website_entry_initiates_refresh_even_if_data_is_fresh(self):
+        """
+        Product Requirement:
+        Website entry must automatically initiate a new refresh even if saved data is recent.
+        It must not be skipped solely because cached data is fresh.
+        """
+        # Data was synced 2 minutes ago (very fresh)
+        self.source.last_successful_sync_at = self.now - timedelta(minutes=2)
+        self.source.last_sync_attempt_at = self.now - timedelta(minutes=2)
+        self.source.next_due_at = self.now + timedelta(hours=6)
+        self.source.sync_status = 'idle'
+        self.source.save()
+
+        # Visitor loads event_list
+        res = self.client.get(self.event_list_url)
+        self.assertEqual(res.status_code, 200)
+
+        # Source is queued for refresh despite fresh data
+        self.source.refresh_from_db()
+        self.assertEqual(self.source.sync_status, 'queued')
+        self.assertTrue(self.source.is_running)
+
+        # A PENDING history record was created
+        history = SyncRunHistory.objects.filter(source=self.source, trigger_type='visitor_entry').first()
+        self.assertIsNotNone(history)
+        self.assertEqual(history.status, 'PENDING')
+
+    def test_concurrent_website_entries_attach_rather_than_duplicate_run(self):
+        """
+        Concurrency:
+        If an equivalent source refresh is already running, attach the new visitor to that active run
+        rather than launching an identical concurrent paid run.
+        """
+        # Active in-flight run
+        self.source.sync_status = 'running'
+        self.source.active_run_id = 'run_inflight_555'
+        self.source.concurrency_lock_until = self.now + timedelta(minutes=4)
+        self.source.concurrency_lock_token = 'token_abc123'
+        self.source.save()
+
+        # Concurrent visitor enters
+        res = self.client.get(self.event_list_url)
+        self.assertEqual(res.status_code, 200)
+
+        # Still only one run, not a duplicate
+        self.source.refresh_from_db()
+        self.assertEqual(self.source.active_run_id, 'run_inflight_555')
+        self.assertEqual(self.source.sync_status, 'running')
+        # No extra history record spawned
+        self.assertEqual(SyncRunHistory.objects.filter(source=self.source).count(), 0)
+
+    @override_settings(
+        TINYFISH_API_KEY='sk-test-tinyfish-key-12345',
+        TINYFISH_ALLOWED_SOURCE_URL='https://example-community.org/events',
+        TINYFISH_ALLOWED_SOURCES=['https://example-community.org/events']
+    )
+    def test_subsequent_entry_after_completion_starts_new_refresh(self):
+        """
+        Acceptance test:
+        After one refresh finishes, opening the website again starts a new real refresh
+        even though the previous results are fresh.
+        """
+        # Run 1 completes
+        self.source.sync_status = 'completed'
+        self.source.last_successful_sync_at = self.now
+        self.source.next_due_at = self.now + timedelta(hours=6)
+        self.source.concurrency_lock_until = None
+        self.source.concurrency_lock_token = None
+        self.source.save()
+
+        # User reloads / visits website again
+        res = self.client.get(self.event_list_url)
+        self.assertEqual(res.status_code, 200)
+
+        # Brand new refresh was initiated!
+        self.source.refresh_from_db()
+        self.assertEqual(self.source.sync_status, 'queued')
+        self.assertTrue(self.source.is_running)
+
+    def test_daily_budget_limit_prevents_runaway_sync_and_reports_truthfully(self):
+        """
+        Safety & Abuse Protection:
+        When daily run limit is reached, automated refresh is skipped to protect budget
+        and truthfully reported as RATE_LIMITED.
+        """
+        today = timezone.localdate()
+        self.source.daily_run_limit = 5
+        self.source.runs_today_count = 5
+        self.source.last_run_date = today
+        self.source.sync_status = 'idle'
+        self.source.save()
+
+        res = self.client.get(self.event_list_url)
+        self.assertEqual(res.status_code, 200)
+
+        # Source remains idle, not queued
+        self.source.refresh_from_db()
+        self.assertEqual(self.source.sync_status, 'idle')
+
+        # Honest RATE_LIMITED history record was created
+        history = SyncRunHistory.objects.filter(source=self.source, status='RATE_LIMITED').first()
+        self.assertIsNotNone(history)
+        self.assertIn("Daily run limit", history.error_message)
+
+    def test_stale_lock_recovery(self):
+        """
+        Lock Recovery:
+        If a worker process crashed and left a stale lock (>5 minutes old),
+        the next visitor safely recovers the lock and initiates a clean sync.
+        """
+        # Stale lock expired 10 minutes ago
+        self.source.sync_status = 'running'
+        self.source.concurrency_lock_until = self.now - timedelta(minutes=10)
+        self.source.concurrency_lock_token = 'stale_token_dead'
+        self.source.save()
+
+        res = self.client.get(self.event_list_url)
+        self.assertEqual(res.status_code, 200)
+
+        self.source.refresh_from_db()
+        # Successfully recovered and re-queued
+        self.assertEqual(self.source.sync_status, 'queued')
+        self.assertNotEqual(self.source.concurrency_lock_token, 'stale_token_dead')
+
+    @override_settings(
+        TINYFISH_API_KEY='sk-test-tinyfish-key-12345',
+        TINYFISH_ALLOWED_SOURCE_URL='https://example-community.org/events',
+        TINYFISH_ALLOWED_SOURCES=['https://example-community.org/events']
+    )
+    def test_hackathons_competitions_category_mapping(self):
+        """
+        Domain Extraction:
+        Support hackathons and competitions with explicit category mapping and content types.
+        """
+        self.source.content_type = 'hackathons'
+        self.source.category_mappings = {'hackathon': 'technology-ai', 'bounty': 'technology-ai'}
+        self.source.save()
+
+        mock_response = MagicMock()
+        mock_response.getcode.return_value = 200
+        mock_response.read.return_value = json.dumps({
+            "status": "COMPLETED",
+            "run_id": "run_hackathon_999",
+            "result": {
+                "events": [
+                    {
+                        "title": "Autonomous AI Agent Hackathon",
+                        "description": "48-hour build sprint on agent architectures with $10k prizes.",
+                        "start_datetime": (self.now + timedelta(days=14)).isoformat(),
+                        "venue": "Bengaluru Innovation Lab",
+                        "city": "Bengaluru",
+                        "category_hints": "Hackathon, AI",
+                        "intended_audience": "Developers & Tech Enthusiasts",
+                        "original_event_page_url": "https://example-community.org/events/ai-hackathon",
+                    }
+                ]
+            }
+        }).encode('utf-8')
+        mock_response.__enter__.return_value = mock_response
+
+        with patch('urllib.request.urlopen', return_value=mock_response):
+            outcome = execute_source_sync(self.source.pk, trigger_type='scheduled_cron')
+            self.assertTrue(outcome['success'])
+
+        hackathon = Event.objects.filter(title="Autonomous AI Agent Hackathon").first()
+        self.assertIsNotNone(hackathon)
+        self.assertEqual(hackathon.category, self.cat_tech)
+        self.assertEqual(hackathon.source, self.source)
+        self.assertEqual(hackathon.source_type, 'external')
+
+    @override_settings(
+        TINYFISH_API_KEY='sk-test-tinyfish-key-12345',
+        TINYFISH_ALLOWED_SOURCE_URL='https://example-community.org/events',
+        TINYFISH_ALLOWED_SOURCES=['https://example-community.org/events']
+    )
+    def test_moderation_policy_preserves_pending_review_unless_auto_approved(self):
+        """
+        Moderation Policy Integrity:
+        Standard source imports require manual admin moderation (review_status='pending').
+        Trusted sources with explicit auto_approve_trusted=True appear publicly.
+        """
+        # 1. Standard source: auto_approve_trusted=False
+        self.source.auto_approve_trusted = False
+        self.source.save()
+
+        mock_data = json.dumps({
+            "status": "COMPLETED",
+            "run_id": "run_mod_1",
+            "result": {
+                "events": [{
+                    "title": "Pending Moderation Meetup",
+                    "start_datetime": (self.now + timedelta(days=5)).isoformat(),
+                    "city": "Bengaluru",
+                    "original_event_page_url": "https://example-community.org/events/pending-meetup"
+                }]
+            }
+        }).encode('utf-8')
+        mock_resp = MagicMock()
+        mock_resp.getcode.return_value = 200
+        mock_resp.read.return_value = mock_data
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch('urllib.request.urlopen', return_value=mock_resp):
+            execute_source_sync(self.source.pk, trigger_type='scheduled_cron')
+
+        pending_event = Event.objects.get(title="Pending Moderation Meetup")
+        self.assertEqual(pending_event.review_status, 'pending')
+        # Public visitor CANNOT see it
+        public_res = self.client.get(self.event_list_url)
+        self.assertNotContains(public_res, "Pending Moderation Meetup")
+
+        # 2. Trusted source: auto_approve_trusted=True
+        self.source.auto_approve_trusted = True
+        self.source.save()
+
+        mock_data_trusted = json.dumps({
+            "status": "COMPLETED",
+            "run_id": "run_mod_2",
+            "result": {
+                "events": [{
+                    "title": "Trusted Partner Keynote",
+                    "start_datetime": (self.now + timedelta(days=6)).isoformat(),
+                    "city": "Bengaluru",
+                    "original_event_page_url": "https://example-community.org/events/trusted-keynote"
+                }]
+            }
+        }).encode('utf-8')
+        mock_resp_trusted = MagicMock()
+        mock_resp_trusted.getcode.return_value = 200
+        mock_resp_trusted.read.return_value = mock_data_trusted
+        mock_resp_trusted.__enter__.return_value = mock_resp_trusted
+
+        with patch('urllib.request.urlopen', return_value=mock_resp_trusted):
+            execute_source_sync(self.source.pk, trigger_type='scheduled_cron')
+
+        trusted_event = Event.objects.get(title="Trusted Partner Keynote")
+        self.assertEqual(trusted_event.review_status, 'approved')
+        # Public visitor CAN see it
+        public_res_after = self.client.get(self.event_list_url)
+        self.assertContains(public_res_after, "Trusted Partner Keynote")
+
+    def test_manual_and_local_events_preserved_during_sync(self):
+        """
+        Data Integrity:
+        Manual organizer events and WhatsApp submissions are preserved without corruption during imports.
+        """
+        # Existing organizer event
+        local_event = Event.objects.create(
+            title="Local Community Pottery Workshop",
+            category=self.cat_tech,
+            start_datetime=self.now + timedelta(days=3),
+            city="Bengaluru",
+            area="Koramangala",
+            venue_name="Clay Studio",
+            organizer_display_name="Artisans Guild",
+            submitted_by=self.admin,
+            source_type="organizer",
+            review_status="approved",
+            event_status="scheduled"
+        )
+
+        mock_data = json.dumps({
+            "status": "COMPLETED",
+            "run_id": "run_preserve_test",
+            "result": {
+                "events": [{
+                    "title": "TinyFish Sourced Tech Talk",
+                    "start_datetime": (self.now + timedelta(days=7)).isoformat(),
+                    "city": "Bengaluru",
+                    "original_event_page_url": "https://example-community.org/events/tech-talk"
+                }]
+            }
+        }).encode('utf-8')
+        mock_resp = MagicMock()
+        mock_resp.getcode.return_value = 200
+        mock_resp.read.return_value = mock_data
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch('urllib.request.urlopen', return_value=mock_resp):
+            execute_source_sync(self.source.pk, trigger_type='scheduled_cron')
+
+        # Local event is completely intact
+        local_event.refresh_from_db()
+        self.assertEqual(local_event.title, "Local Community Pottery Workshop")
+        self.assertEqual(local_event.source_type, "organizer")
+        self.assertEqual(local_event.review_status, "approved")
+
+    def test_live_sync_status_api_endpoint(self):
+        """
+        Frontend Dynamic Refresh:
+        Verify /events/api/sync-status/ returns valid JSON with sync state.
+        """
+        # Idle status
+        res = self.client.get(self.sync_api_url)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIn('is_syncing', data)
+        self.assertFalse(data['is_syncing'])
+
+        # Active syncing status
+        self.source.sync_status = 'running'
+        self.source.concurrency_lock_until = self.now + timedelta(minutes=3)
+        self.source.save()
+
+        res_active = self.client.get(self.sync_api_url)
+        data_active = res_active.json()
+        self.assertTrue(data_active['is_syncing'])
+        self.assertIn(self.source.name, data_active['active_source_names'])
+
+
+class VibentoRefinementAndDiscoveryTests(TestCase):
+    def setUp(self):
+        self.now = timezone.now()
+        self.user = User.objects.create_user(
+            username='learner@example.com',
+            email='learner@example.com',
+            password='Password123!'
+        )
+        self.other_user = User.objects.create_user(
+            username='other@example.com',
+            email='other@example.com',
+            password='Password123!'
+        )
+        self.staff_user = User.objects.create_user(
+            username='admin@example.com',
+            email='admin@example.com',
+            password='Password123!',
+            is_staff=True,
+            is_superuser=True
+        )
+        self.cat = Category.objects.create(name='Technology', slug='technology')
+
+        self.event_a = Event.objects.create(
+            title="AI Builders Hackathon",
+            slug="ai-builders-hackathon",
+            description="Build agent systems with team.",
+            category=self.cat,
+            start_datetime=self.now + timedelta(days=5),
+            registration_deadline=self.now + timedelta(days=3),
+            deadline_type="Registration Deadline",
+            city="Bengaluru",
+            venue_name="Tech Park",
+            organizer_display_name="AI Guild",
+            submitted_by=self.staff_user,
+            review_status="approved",
+            event_status="scheduled"
+        )
+        self.event_b = Event.objects.create(
+            title="Design Sprint Competition",
+            slug="design-sprint-competition",
+            description="24-hour design sprint.",
+            category=self.cat,
+            start_datetime=self.now + timedelta(days=2),
+            registration_deadline=self.now + timedelta(days=1),
+            deadline_type="Submission Deadline",
+            city="Bengaluru",
+            venue_name="Design Hub",
+            organizer_display_name="Design Hub",
+            submitted_by=self.staff_user,
+            review_status="approved",
+            event_status="scheduled"
+        )
+        self.event_no_deadline = Event.objects.create(
+            title="Open Meetup Without Deadline",
+            slug="open-meetup-no-deadline",
+            description="Open gathering.",
+            category=self.cat,
+            start_datetime=self.now + timedelta(days=4),
+            registration_deadline=None,
+            city="Bengaluru",
+            venue_name="Open Park",
+            organizer_display_name="Open Guild",
+            submitted_by=self.staff_user,
+            review_status="approved",
+            event_status="scheduled"
+        )
+        self.event_passed = Event.objects.create(
+            title="Expired Deadline Workshop",
+            slug="expired-deadline-workshop",
+            description="Workshop whose deadline was yesterday.",
+            category=self.cat,
+            start_datetime=self.now + timedelta(days=2),
+            registration_deadline=self.now - timedelta(days=1),
+            city="Bengaluru",
+            venue_name="Old Studio",
+            organizer_display_name="Past Guild",
+            submitted_by=self.staff_user,
+            review_status="approved",
+            event_status="scheduled"
+        )
+
+    def test_clean_landing_page_structure_and_constraints(self):
+        """
+        Requirement 1: Clean Landing / Login Page
+        3-4 scrolling sections:
+        - Vibento name and clear intro
+        - What the platform does
+        - TinyFish discovery USP for events, hackathons, and competitions
+        - How it works with clear Login/Sign In and Sign Up options
+        - Does NOT show event cards, personal deadlines, or technical sync tables
+        - Does NOT claim universal web coverage
+        """
+        res = self.client.get(reverse('events:landing'))
+        self.assertEqual(res.status_code, 200)
+
+        # Introduction & Name
+        self.assertContains(res, "Vibento")
+        self.assertContains(res, "Discover Local Events, Hackathons & Competitions")
+
+        # Mentions TinyFish discovery for events, hackathons, and competitions
+        self.assertContains(res, "TinyFish")
+        self.assertContains(res, "hackathons")
+        self.assertContains(res, "competitions")
+
+        # How it works & Login / Sign Up options
+        self.assertContains(res, "How It Works")
+        self.assertContains(res, "User Sign In")
+        self.assertContains(res, "Create Account")
+        self.assertContains(res, "Admin Portal")
+
+        # Prohibited elements check:
+        # NO event cards or listings
+        self.assertNotContains(res, "class=\"event-card\"")
+        self.assertNotContains(res, "AI Builders Hackathon")
+        # NO technical sync logs or tables
+        self.assertNotContains(res, "records_extracted_count")
+        self.assertNotContains(res, "run_id")
+        # NO universal coverage claims
+        self.assertNotContains(res, "universal web coverage")
+
+    def test_event_enrollment_lifecycle(self):
+        """
+        User enrollment lifecycle:
+        - Authenticated user enrolls in approved event.
+        - Can cancel enrollment.
+        - Can re-activate enrollment.
+        - Unauthenticated user redirected to login.
+        """
+        self.client.force_login(self.user)
+        enroll_url = reverse('events:event_enroll', kwargs={'slug': self.event_a.slug})
+
+        # 1. Enroll
+        res = self.client.post(enroll_url, {'action': 'enroll'})
+        self.assertEqual(res.status_code, 302)
+        enr = EventEnrollment.objects.filter(user=self.user, event=self.event_a).first()
+        self.assertIsNotNone(enr)
+        self.assertEqual(enr.status, 'confirmed')
+
+        # 2. Cancel enrollment
+        res_cancel = self.client.post(enroll_url, {'action': 'cancel'})
+        self.assertEqual(res_cancel.status_code, 302)
+        enr.refresh_from_db()
+        self.assertEqual(enr.status, 'cancelled')
+
+        # 3. Re-enroll
+        res_reenroll = self.client.post(enroll_url, {'action': 'enroll'})
+        self.assertEqual(res_reenroll.status_code, 302)
+        enr.refresh_from_db()
+        self.assertEqual(enr.status, 'confirmed')
+
+        # 4. Anonymous user cannot enroll directly
+        self.client.logout()
+        res_anon = self.client.post(enroll_url, {'action': 'enroll'})
+        self.assertEqual(res_anon.status_code, 302)
+        self.assertIn(reverse('accounts:login'), res_anon.url)
+
+    def test_user_dashboard_sections_and_profile(self):
+        """
+        Requirement 2: User Dashboard Sections:
+        - My Profile
+        - My Enrolled Events
+        - Upcoming Events
+        - Deadlines
+        - Explore Events
+        """
+        self.client.force_login(self.user)
+        EventEnrollment.objects.create(user=self.user, event=self.event_a, status='confirmed')
+
+        res = self.client.get(reverse('events:user_dashboard'))
+        self.assertEqual(res.status_code, 200)
+
+        # Clearly named sections
+        self.assertContains(res, "My Profile")
+        self.assertContains(res, "My Enrolled Events")
+        self.assertContains(res, "Upcoming Events")
+        self.assertContains(res, "Deadlines")
+        self.assertContains(res, "Explore Events")
+
+        # Edit profile link exists
+        self.assertContains(res, reverse('accounts:profile'))
+
+    def test_compact_red_deadline_reminder_selects_nearest_future_deadline(self):
+        """
+        Compact red reminder:
+        - Selects the nearest future relevant deadline among upcoming enrolled events.
+        - Event B deadline is in 1 day; Event A is in 3 days. Event B must be selected!
+        - Shows event name, deadline type, date/time, remaining time, and View Event link.
+        """
+        self.client.force_login(self.user)
+        # Enroll user in both Event A and Event B
+        EventEnrollment.objects.create(user=self.user, event=self.event_a, status='confirmed')
+        EventEnrollment.objects.create(user=self.user, event=self.event_b, status='confirmed')
+
+        res = self.client.get(reverse('events:user_dashboard'))
+        self.assertEqual(res.status_code, 200)
+
+        # Red alert container must exist
+        self.assertContains(res, "alert alert-danger")
+        self.assertContains(res, "Action Required")
+
+        # Event B is nearest (1 day vs 3 days)
+        self.assertContains(res, self.event_b.title)
+        self.assertContains(res, "Submission Deadline")
+        self.assertContains(res, "remaining")
+        self.assertContains(res, self.event_b.get_absolute_url())
+
+    def test_compact_red_reminder_excludes_passed_cancelled_and_missing_deadlines(self):
+        """
+        Compact red reminder exclusions:
+        - Passed deadline is excluded.
+        - Event without deadline does NOT substitute start time.
+        - Cancelled enrollment is excluded.
+        - If no eligible future deadline exists, NO red warning is shown.
+        """
+        self.client.force_login(self.user)
+
+        # Scenario 1: Only enrolled in event without a deadline
+        EventEnrollment.objects.create(user=self.user, event=self.event_no_deadline, status='confirmed')
+        res1 = self.client.get(reverse('events:user_dashboard'))
+        self.assertNotContains(res1, "alert alert-danger")
+        self.assertNotContains(res1, "Action Required")
+
+        # Scenario 2: Enrolled in event with passed deadline
+        EventEnrollment.objects.create(user=self.user, event=self.event_passed, status='confirmed')
+        res2 = self.client.get(reverse('events:user_dashboard'))
+        self.assertNotContains(res2, "alert alert-danger")
+
+        # Scenario 3: Enrolled in Event A with future deadline, but status is 'cancelled'
+        EventEnrollment.objects.create(user=self.user, event=self.event_a, status='cancelled')
+        res3 = self.client.get(reverse('events:user_dashboard'))
+        self.assertNotContains(res3, "alert alert-danger")
+
+        # Scenario 4: Another user has an enrolled deadline - must not appear for self.user
+        EventEnrollment.objects.create(user=self.other_user, event=self.event_b, status='confirmed')
+        res4 = self.client.get(reverse('events:user_dashboard'))
+        self.assertNotContains(res4, "alert alert-danger")
+
+    def test_clean_organized_admin_dashboard_sections(self):
+        """
+        Requirement 3: Clean, organized admin dashboard flow:
+        - Overview
+        - TinyFish Sync
+        - Events & Moderation
+        - Users & Enrollments
+        - Settings
+        - No credentials leaked
+        """
+        self.client.force_login(self.staff_user)
+        res = self.client.get(reverse('admin:index'))
+        self.assertEqual(res.status_code, 200)
+
+        # Tab navigation items
+        self.assertContains(res, "Overview")
+        self.assertContains(res, "TinyFish Sync")
+        self.assertContains(res, "Events & Moderation")
+        self.assertContains(res, "Users & Enrollments")
+        self.assertContains(res, "Settings & Sources")
+
+        # Credentials safeguard
+        self.assertNotContains(res, "sk-test-tinyfish")
+        self.assertNotContains(res, "TINYFISH_API_KEY")
 
