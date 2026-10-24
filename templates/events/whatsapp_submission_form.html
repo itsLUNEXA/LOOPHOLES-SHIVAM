@@ -1,0 +1,209 @@
+{% extends 'base.html' %}
+
+{% block title %}Submit a WhatsApp Event | Vibento{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <div class="row justify-content-center">
+    <div class="col-lg-9">
+      <div class="form-card mb-5">
+        <!-- Header -->
+        <div class="d-flex align-items-center justify-content-between mb-4 pb-3 border-bottom">
+          <div class="d-flex align-items-center gap-3">
+            <div class="p-3 rounded-circle text-white shadow-sm" style="background-color: #25D366;">
+              <i class="bi bi-whatsapp fs-2"></i>
+            </div>
+            <div>
+              <h2 class="fw-bold mb-0">Submit a WhatsApp Event</h2>
+              <p class="text-muted small mb-0">Transform a forwarded announcement into a structured community listing.</p>
+            </div>
+          </div>
+          <a href="{% url 'events:organizer_dashboard' %}" class="btn btn-outline-secondary btn-sm rounded-pill px-3">
+            <i class="bi bi-arrow-left me-1"></i> Dashboard
+          </a>
+        </div>
+
+        <!-- Privacy & Flow Notice -->
+        <div class="alert alert-success bg-opacity-10 border border-success-subtle rounded-3 p-3 mb-4">
+          <div class="d-flex gap-2">
+            <i class="bi bi-shield-lock-fill text-success fs-5"></i>
+            <div class="small">
+              <strong>Privacy Guarantee:</strong>
+              The raw message and flyer you paste below are strictly private to you and the moderation team.
+              Only the structured details you enter in the public section will be published once approved.
+            </div>
+          </div>
+        </div>
+
+        <form method="post" enctype="multipart/form-data" novalidate>
+          {% csrf_token %}
+
+          {% if form.non_field_errors %}
+            <div class="alert alert-danger py-2">
+              {% for error in form.non_field_errors %}
+                <div>{{ error }}</div>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+          <!-- Step 1: Raw WhatsApp Inputs -->
+          <div class="p-3 rounded-3 mb-4 border" style="background-color: #f0fdf4;">
+            <h5 class="fw-bold text-success-emphasis mb-3">
+              <i class="bi bi-chat-left-text me-2"></i>Step 1: Original WhatsApp Forward (Private)
+            </h5>
+
+            <div class="mb-3">
+              <label class="form-label" for="{{ form.original_message.id_for_label }}">
+                Paste WhatsApp Message Text <span class="text-danger">*</span>
+              </label>
+              {{ form.original_message }}
+              <div class="form-text small">{{ form.original_message.help_text }}</div>
+              {% if form.original_message.errors %}<div class="text-danger small mt-1">{{ form.original_message.errors.0 }}</div>{% endif %}
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="{{ form.original_poster.id_for_label }}">
+                Original Flyer / Screenshot (Optional)
+              </label>
+              {{ form.original_poster }}
+              <div class="form-text small">{{ form.original_poster.help_text }}</div>
+              {% if form.original_poster.errors %}<div class="text-danger small mt-1">{{ form.original_poster.errors.0 }}</div>{% endif %}
+            </div>
+          </div>
+
+          <!-- Step 2: Structured Details -->
+          <div class="mb-4">
+            <h5 class="fw-bold mb-3">
+              <i class="bi bi-layout-text-window-reverse text-primary me-2"></i>Step 2: Structured Public Event Details
+            </h5>
+            <p class="text-muted small">Extract and verify the key event attributes for the community directory.</p>
+
+            <div class="mb-3">
+              <label class="form-label" for="{{ form.title.id_for_label }}">Event Title <span class="text-danger">*</span></label>
+              {{ form.title }}
+              {% if form.title.errors %}<div class="text-danger small mt-1">{{ form.title.errors.0 }}</div>{% endif %}
+            </div>
+
+            <div class="row g-3 mb-3">
+              <div class="col-md-6">
+                <label class="form-label" for="{{ form.category.id_for_label }}">Category <span class="text-danger">*</span></label>
+                {{ form.category }}
+                {% if form.category.errors %}<div class="text-danger small mt-1">{{ form.category.errors.0 }}</div>{% endif %}
+              </div>
+              <div class="col-md-6">
+                <label class="form-label" for="{{ form.intended_audience.id_for_label }}">Target Audience <span class="text-danger">*</span></label>
+                {{ form.intended_audience }}
+                {% if form.intended_audience.errors %}<div class="text-danger small mt-1">{{ form.intended_audience.errors.0 }}</div>{% endif %}
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="{{ form.description.id_for_label }}">Public Description <span class="text-danger">*</span></label>
+              {{ form.description }}
+              {% if form.description.errors %}<div class="text-danger small mt-1">{{ form.description.errors.0 }}</div>{% endif %}
+            </div>
+
+            <div class="row g-3 mb-3">
+              <div class="col-md-6">
+                <label class="form-label" for="{{ form.start_datetime.id_for_label }}">Start Date & Time <span class="text-danger">*</span></label>
+                {{ form.start_datetime }}
+                {% if form.start_datetime.errors %}<div class="text-danger small mt-1">{{ form.start_datetime.errors.0 }}</div>{% endif %}
+              </div>
+              <div class="col-md-6">
+                <label class="form-label" for="{{ form.end_datetime.id_for_label }}">End Date & Time <span class="text-danger">*</span></label>
+                {{ form.end_datetime }}
+                {% if form.end_datetime.errors %}<div class="text-danger small mt-1">{{ form.end_datetime.errors.0 }}</div>{% endif %}
+              </div>
+            </div>
+
+            <div class="row g-3 mb-3">
+              <div class="col-md-6">
+                <label class="form-label" for="{{ form.city.id_for_label }}">City <span class="text-danger">*</span></label>
+                {{ form.city }}
+                {% if form.city.errors %}<div class="text-danger small mt-1">{{ form.city.errors.0 }}</div>{% endif %}
+              </div>
+              <div class="col-md-6">
+                <label class="form-label" for="{{ form.area.id_for_label }}">Area / Locality <span class="text-danger">*</span></label>
+                {{ form.area }}
+                {% if form.area.errors %}<div class="text-danger small mt-1">{{ form.area.errors.0 }}</div>{% endif %}
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="{{ form.venue_name.id_for_label }}">Venue Name <span class="text-danger">*</span></label>
+              {{ form.venue_name }}
+              {% if form.venue_name.errors %}<div class="text-danger small mt-1">{{ form.venue_name.errors.0 }}</div>{% endif %}
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="{{ form.address.id_for_label }}">Venue Address</label>
+              {{ form.address }}
+              {% if form.address.errors %}<div class="text-danger small mt-1">{{ form.address.errors.0 }}</div>{% endif %}
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="{{ form.organizer_display_name.id_for_label }}">Organizer Display Name <span class="text-danger">*</span></label>
+              {{ form.organizer_display_name }}
+              {% if form.organizer_display_name.errors %}<div class="text-danger small mt-1">{{ form.organizer_display_name.errors.0 }}</div>{% endif %}
+            </div>
+
+            <div class="row g-3 mb-3 align-items-center">
+              <div class="col-md-4">
+                <div class="form-check pt-4">
+                  {{ form.is_free }}
+                  <label class="form-check-label fw-semibold" for="{{ form.is_free.id_for_label }}">Free Event</label>
+                </div>
+              </div>
+              <div class="col-md-8 price-wrapper">
+                <label class="form-label" for="{{ form.price.id_for_label }}">Price (INR)</label>
+                {{ form.price }}
+                {% if form.price.errors %}<div class="text-danger small mt-1">{{ form.price.errors.0 }}</div>{% endif %}
+              </div>
+            </div>
+
+            <div class="row g-3 mb-3">
+              <div class="col-md-6">
+                <label class="form-label" for="{{ form.registration_url.id_for_label }}">External Registration URL</label>
+                {{ form.registration_url }}
+                {% if form.registration_url.errors %}<div class="text-danger small mt-1">{{ form.registration_url.errors.0 }}</div>{% endif %}
+              </div>
+              <div class="col-md-6">
+                <label class="form-label" for="{{ form.registration_deadline.id_for_label }}">Registration Deadline (Optional)</label>
+                {{ form.registration_deadline }}
+                {% if form.registration_deadline.errors %}<div class="text-danger small mt-1">{{ form.registration_deadline.errors.0 }}</div>{% endif %}
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="{{ form.poster.id_for_label }}">Public Event Poster / Banner</label>
+              {{ form.poster }}
+              {% if form.poster.errors %}<div class="text-danger small mt-1">{{ form.poster.errors.0 }}</div>{% endif %}
+            </div>
+          </div>
+
+          <!-- Step 3: Required Permission Confirmation -->
+          <div class="p-3 bg-light rounded-3 border mb-4">
+            <h6 class="fw-bold mb-2 text-dark"><i class="bi bi-check2-circle text-primary me-2"></i>Authorization & Consent</h6>
+            <div class="form-check">
+              {{ form.public_permission_confirmed }}
+              <label class="form-check-label small fw-semibold text-dark" for="{{ form.public_permission_confirmed.id_for_label }}">
+                {{ form.public_permission_confirmed.label }} <span class="text-danger">*</span>
+              </label>
+            </div>
+            {% if form.public_permission_confirmed.errors %}
+              <div class="text-danger small mt-2 fw-semibold">{{ form.public_permission_confirmed.errors.0 }}</div>
+            {% endif %}
+          </div>
+
+          <div class="d-flex justify-content-end gap-2 pt-3 border-top">
+            <a href="{% url 'events:organizer_dashboard' %}" class="btn btn-light rounded-pill px-4">Cancel</a>
+            <button type="submit" class="btn btn-success rounded-pill px-5 shadow-sm">
+              <i class="bi bi-send-check me-1"></i> Submit for Admin Review
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

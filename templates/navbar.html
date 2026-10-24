@@ -1,0 +1,107 @@
+<nav class="navbar navbar-expand-lg custom-nav sticky-top">
+  <div class="container">
+    <a class="navbar-brand d-flex align-items-center gap-2" href="{% url 'events:event_list' %}">
+      <i class="bi bi-geo-alt-fill text-primary fs-4"></i>
+      <span class="navbar-brand-gradient fs-4">Vibento</span>
+    </a>
+
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarMain" aria-controls="navbarMain" aria-expanded="false" aria-label="Toggle navigation">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+
+    <div class="collapse navbar-collapse" id="navbarMain">
+      <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+        <li class="nav-item">
+          <a class="nav-link fw-semibold px-3" href="{% url 'events:event_list' %}">
+            <i class="bi bi-compass me-1"></i> Discover Events
+          </a>
+        </li>
+        {% if user.is_authenticated %}
+        <li class="nav-item">
+          <a class="nav-link fw-semibold px-3" href="{% url 'events:organizer_dashboard' %}">
+            <i class="bi bi-grid-1x2 me-1"></i> Organizer Dashboard
+          </a>
+        </li>
+        {% if user.is_staff %}
+        <li class="nav-item">
+          <a class="nav-link fw-bold px-3 text-warning-emphasis" href="{% url 'admin:index' %}">
+            <i class="bi bi-shield-lock-fill text-warning me-1"></i> Admin Dashboard
+          </a>
+        </li>
+        {% endif %}
+        {% endif %}
+      </ul>
+
+      <div class="d-flex align-items-center gap-2">
+        {% if user.is_authenticated %}
+          <!-- Submit Event Dropdown -->
+          <div class="dropdown">
+            <button class="btn btn-primary dropdown-toggle rounded-pill px-3 shadow-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+              <i class="bi bi-plus-circle me-1"></i> Submit Event
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 rounded-3">
+              <li>
+                <a class="dropdown-item py-2" href="{% url 'events:event_create' %}">
+                  <i class="bi bi-calendar-plus text-primary me-2"></i> Standard Submission
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item py-2" href="{% url 'events:whatsapp_submission' %}">
+                  <i class="bi bi-whatsapp text-success me-2"></i> Submit WhatsApp Event
+                </a>
+              </li>
+            </ul>
+          </div>
+
+          <!-- User Menu Dropdown -->
+          <div class="dropdown">
+            <button class="btn btn-outline-secondary dropdown-toggle rounded-pill px-3" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+              <i class="bi bi-person-circle me-1"></i> {{ user.email|default:user.username }}
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 rounded-3">
+              <li>
+                <h6 class="dropdown-header">
+                  Signed in as <strong>{{ user.email|default:user.username }}</strong>
+                  {% if user.profile %}
+                    <br><small class="text-muted">{{ user.profile.get_profile_type_display }}</small>
+                  {% endif %}
+                </h6>
+              </li>
+              <li><hr class="dropdown-divider"></li>
+              <li>
+                <a class="dropdown-item py-2" href="{% url 'accounts:profile' %}">
+                  <i class="bi bi-sliders me-2 text-primary"></i> Profile & Preferences
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item py-2" href="{% url 'events:organizer_dashboard' %}">
+                  <i class="bi bi-collection me-2 text-info"></i> My Submissions
+                </a>
+              </li>
+              {% if user.is_staff %}
+              <li><hr class="dropdown-divider"></li>
+              <li>
+                <a class="dropdown-item py-2 fw-semibold text-warning-emphasis" href="{% url 'admin:index' %}">
+                  <i class="bi bi-speedometer2 me-2 text-warning"></i> Central Admin Dashboard
+                </a>
+              </li>
+              {% endif %}
+              <li><hr class="dropdown-divider"></li>
+              <li>
+                <form action="{% url 'accounts:logout' %}" method="post" class="d-inline">
+                  {% csrf_token %}
+                  <button type="submit" class="dropdown-item py-2 text-danger">
+                    <i class="bi bi-box-arrow-right me-2"></i> Log Out
+                  </button>
+                </form>
+              </li>
+            </ul>
+          </div>
+        {% else %}
+          <a href="{% url 'accounts:login' %}" class="btn btn-outline-primary rounded-pill px-3">Log In</a>
+          <a href="{% url 'accounts:signup' %}" class="btn btn-primary rounded-pill px-4 shadow-sm">Sign Up</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</nav>

@@ -1,0 +1,248 @@
+{% extends 'base.html' %}
+
+{% block title %}Vibento | Discover nearby events. Connect with your community.{% endblock %}
+
+{% block content %}
+<!-- Hero Section -->
+<section class="hero-banner">
+  <div class="container text-center position-relative" style="z-index: 2;">
+    <span class="badge bg-primary-subtle text-primary-emphasis px-3 py-2 rounded-pill fw-semibold mb-3 border border-primary-subtle">
+      <i class="bi bi-stars me-1"></i> Part 1 Working Prototype
+    </span>
+    <h1 class="display-5 fw-bold mb-3">Vibento</h1>
+    <p class="lead text-light text-opacity-75 mx-auto mb-4" style="max-width: 650px;">
+      Discover nearby events. Connect with your community. Explore tech meetups, founder breakfasts, pottery workshops, acoustic jams, and neighborhood gatherings.
+    </p>
+
+    <!-- Search Form -->
+    <div class="row justify-content-center">
+      <div class="col-lg-8">
+        <form method="get" action="{% url 'events:event_list' %}" class="d-flex gap-2 bg-white p-2 rounded-pill shadow-lg">
+          <div class="input-group border-0">
+            <span class="input-group-text bg-transparent border-0 text-muted ps-3">
+              <i class="bi bi-search fs-5"></i>
+            </span>
+            <input type="text" name="q" value="{{ search_query }}" class="form-control border-0 shadow-none" placeholder="Search by title, topic, venue, or host...">
+          </div>
+          {% if selected_category %}<input type="hidden" name="category" value="{{ selected_category }}">{% endif %}
+          {% if selected_city %}<input type="hidden" name="city" value="{{ selected_city }}">{% endif %}
+          {% if selected_pricing %}<input type="hidden" name="pricing" value="{{ selected_pricing }}">{% endif %}
+          {% if selected_date_range %}<input type="hidden" name="date_range" value="{{ selected_date_range }}">{% endif %}
+          <button type="submit" class="btn btn-primary rounded-pill px-4 fw-semibold shadow-sm">
+            Search
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Filter Section -->
+<div class="container mb-4">
+  <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
+    <form method="get" action="{% url 'events:event_list' %}">
+      {% if search_query %}<input type="hidden" name="q" value="{{ search_query }}">{% endif %}
+
+      <div class="row g-3 align-items-center">
+        <!-- Category Filter -->
+        <div class="col-md-3 col-sm-6">
+          <label class="form-label small text-muted mb-1"><i class="bi bi-tag me-1"></i>Category</label>
+          <select name="category" class="form-select form-select-sm rounded-pill" onchange="this.form.submit()">
+            <option value="">All Categories</option>
+            {% for cat in categories %}
+              <option value="{{ cat.slug }}" {% if selected_category == cat.slug %}selected{% endif %}>{{ cat.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- City Filter -->
+        <div class="col-md-3 col-sm-6">
+          <label class="form-label small text-muted mb-1"><i class="bi bi-geo-alt me-1"></i>City</label>
+          <select name="city" class="form-select form-select-sm rounded-pill" onchange="this.form.submit()">
+            <option value="">All Cities</option>
+            {% for city_name in available_cities %}
+              <option value="{{ city_name }}" {% if selected_city == city_name %}selected{% endif %}>{{ city_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Date Range Filter -->
+        <div class="col-md-3 col-sm-6">
+          <label class="form-label small text-muted mb-1"><i class="bi bi-calendar3 me-1"></i>When</label>
+          <select name="date_range" class="form-select form-select-sm rounded-pill" onchange="this.form.submit()">
+            <option value="" {% if not selected_date_range %}selected{% endif %}>Any Upcoming Date</option>
+            <option value="today" {% if selected_date_range == 'today' %}selected{% endif %}>Today</option>
+            <option value="tomorrow" {% if selected_date_range == 'tomorrow' %}selected{% endif %}>Tomorrow</option>
+            <option value="this_weekend" {% if selected_date_range == 'this_weekend' %}selected{% endif %}>This Weekend</option>
+            <option value="this_week" {% if selected_date_range == 'this_week' %}selected{% endif %}>Next 7 Days</option>
+            <option value="this_month" {% if selected_date_range == 'this_month' %}selected{% endif %}>This Month</option>
+          </select>
+        </div>
+
+        <!-- Pricing Filter -->
+        <div class="col-md-3 col-sm-6">
+          <label class="form-label small text-muted mb-1"><i class="bi bi-ticket-perforated me-1"></i>Pricing</label>
+          <select name="pricing" class="form-select form-select-sm rounded-pill" onchange="this.form.submit()">
+            <option value="" {% if not selected_pricing %}selected{% endif %}>All Events (Free & Paid)</option>
+            <option value="free" {% if selected_pricing == 'free' %}selected{% endif %}>Free Only</option>
+            <option value="paid" {% if selected_pricing == 'paid' %}selected{% endif %}>Paid Only</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Reset Filter Link -->
+      {% if has_filters %}
+        <div class="d-flex align-items-center justify-content-between mt-3 pt-2 border-top">
+          <div class="small text-muted">
+            Filtered results: <strong>{{ total_events_count }}</strong> approved event{{ total_events_count|pluralize }} found.
+          </div>
+          <a href="{% url 'events:event_list' %}" class="btn btn-outline-danger btn-sm rounded-pill px-3">
+            <i class="bi bi-x-circle me-1"></i> Reset Filters
+          </a>
+        </div>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+<!-- Events Grid Section -->
+<div class="container mb-5">
+  {% if events %}
+    <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
+      {% for event in events %}
+        <div class="col">
+          <div class="event-card">
+            <!-- Event Card Image / Poster -->
+            <div class="event-card-img-wrapper position-relative">
+              {% if event.poster %}
+                <img src="{{ event.poster.url }}" alt="{{ event.title }}">
+              {% else %}
+                <div class="d-flex align-items-center justify-content-center h-100 bg-gradient text-white" style="background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%);">
+                  <div class="text-center p-3">
+                    <i class="bi bi-calendar-event fs-1 opacity-75"></i>
+                    <div class="fw-bold mt-1 text-white">{{ event.category.name }}</div>
+                  </div>
+                </div>
+              {% endif %}
+
+              <!-- Category Badge overlay -->
+              <span class="badge bg-white text-dark shadow-sm position-absolute top-0 start-0 m-3 px-3 py-1 rounded-pill fw-semibold small">
+                {{ event.category.name }}
+              </span>
+
+              <!-- Pricing Badge overlay -->
+              <span class="badge {% if event.is_free %}bg-success text-white{% else %}bg-dark text-white{% endif %} position-absolute top-0 end-0 m-3 px-3 py-1 rounded-pill fw-semibold small">
+                {% if event.is_free %}Free{% else %}₹{{ event.price }}{% endif %}
+              </span>
+            </div>
+
+            <!-- Card Body -->
+            <div class="event-card-body">
+              <div class="d-flex align-items-center justify-content-between text-muted small mb-2">
+                <div>
+                  <i class="bi bi-calendar3 text-primary me-1"></i>
+                  {{ event.start_datetime|date:"D, M d • h:i A" }}
+                </div>
+                <!-- Source Badge -->
+                {% if event.source_type == 'whatsapp' %}
+                  <span class="badge badge-whatsapp-source rounded-pill" title="Submitted manually from a WhatsApp announcement">
+                    <i class="bi bi-whatsapp"></i> WhatsApp
+                  </span>
+                {% else %}
+                  <span class="badge badge-organizer-source rounded-pill">
+                    <i class="bi bi-patch-check"></i> Host
+                  </span>
+                {% endif %}
+              </div>
+
+              <h5 class="fw-bold mb-2">
+                <a href="{{ event.get_absolute_url }}" class="text-decoration-none text-dark stretched-link">
+                  {{ event.title }}
+                </a>
+              </h5>
+
+              <p class="text-muted small mb-3 flex-grow-1" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                {{ event.description }}
+              </p>
+
+              <div class="border-top pt-2 mt-auto text-muted small">
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="text-truncate me-2">
+                    <i class="bi bi-geo-alt-fill text-danger me-1"></i>
+                    <strong>{{ event.area }}</strong>, {{ event.city }}
+                  </div>
+                  <div class="text-truncate text-muted">
+                    <i class="bi bi-person me-1"></i>{{ event.organizer_display_name }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <!-- Pagination -->
+    {% if events.has_other_pages %}
+      <nav aria-label="Page navigation" class="mt-5">
+        <ul class="pagination justify-content-center">
+          {% if events.has_previous %}
+            <li class="page-item">
+              <a class="page-link rounded-pill px-3 me-2" href="?page={{ events.previous_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_city %}&city={{ selected_city }}{% endif %}{% if selected_pricing %}&pricing={{ selected_pricing }}{% endif %}{% if selected_date_range %}&date_range={{ selected_date_range }}{% endif %}">
+                &laquo; Previous
+              </a>
+            </li>
+          {% endif %}
+
+          <li class="page-item active">
+            <span class="page-link rounded-pill px-3">
+              Page {{ events.number }} of {{ events.paginator.num_pages }}
+            </span>
+          </li>
+
+          {% if events.has_next %}
+            <li class="page-item">
+              <a class="page-link rounded-pill px-3 ms-2" href="?page={{ events.next_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_city %}&city={{ selected_city }}{% endif %}{% if selected_pricing %}&pricing={{ selected_pricing }}{% endif %}{% if selected_date_range %}&date_range={{ selected_date_range }}{% endif %}">
+                Next &raquo;
+              </a>
+            </li>
+          {% endif %}
+        </ul>
+      </nav>
+    {% endif %}
+
+  {% else %}
+    <!-- Empty State -->
+    <div class="text-center py-5 my-4 bg-white rounded-4 shadow-sm border p-5">
+      <div class="d-inline-flex p-4 rounded-circle bg-light text-primary mb-3">
+        <i class="bi bi-search fs-1"></i>
+      </div>
+      <h3 class="fw-bold">No approved events match your criteria</h3>
+      <p class="text-muted mx-auto" style="max-width: 480px;">
+        {% if has_filters %}
+          We couldn't find any events with the selected filters. Try resetting the filters or broadening your search.
+        {% else %}
+          There are currently no upcoming approved events. Be the first organizer to submit a community event!
+        {% endif %}
+      </p>
+
+      <div class="d-flex justify-content-center gap-3 mt-4">
+        {% if has_filters %}
+          <a href="{% url 'events:event_list' %}" class="btn btn-outline-primary rounded-pill px-4">
+            <i class="bi bi-arrow-counterclockwise me-1"></i> Reset All Filters
+          </a>
+        {% endif %}
+        {% if user.is_authenticated %}
+          <a href="{% url 'events:event_create' %}" class="btn btn-primary rounded-pill px-4 shadow-sm">
+            <i class="bi bi-plus-circle me-1"></i> Submit An Event
+          </a>
+        {% else %}
+          <a href="{% url 'accounts:signup' %}" class="btn btn-primary rounded-pill px-4 shadow-sm">
+            Sign Up to Submit Event
+          </a>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,111 @@
+{% extends 'base.html' %}
+
+{% block title %}Sign Up | Vibento{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+      <div class="form-card">
+        <div class="text-center mb-4">
+          <div class="d-inline-flex p-3 rounded-circle bg-primary-subtle text-primary mb-3">
+            <i class="bi bi-person-plus-fill fs-2"></i>
+          </div>
+          <h2 class="fw-bold">Join Your Local Community</h2>
+          <p class="text-muted small">One account to attend local events and organize your own.</p>
+        </div>
+
+        <form method="post" novalidate>
+          {% csrf_token %}
+
+          {% if form.non_field_errors %}
+            <div class="alert alert-danger py-2">
+              {% for error in form.non_field_errors %}
+                <div>{{ error }}</div>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+          <div class="row g-3 mb-3">
+            <div class="col-sm-6">
+              <label class="form-label" for="{{ form.first_name.id_for_label }}">First Name</label>
+              {{ form.first_name }}
+              {% if form.first_name.errors %}<div class="text-danger small mt-1">{{ form.first_name.errors.0 }}</div>{% endif %}
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label" for="{{ form.last_name.id_for_label }}">Last Name</label>
+              {{ form.last_name }}
+              {% if form.last_name.errors %}<div class="text-danger small mt-1">{{ form.last_name.errors.0 }}</div>{% endif %}
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="{{ form.username.id_for_label }}">Username <span class="text-danger">*</span></label>
+            {{ form.username }}
+            {% if form.username.errors %}<div class="text-danger small mt-1">{{ form.username.errors.0 }}</div>{% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="{{ form.email.id_for_label }}">Email Address <span class="text-danger">*</span></label>
+            {{ form.email }}
+            {% if form.email.errors %}<div class="text-danger small mt-1">{{ form.email.errors.0 }}</div>{% endif %}
+          </div>
+
+          <div class="row g-3 mb-3">
+            <div class="col-sm-6">
+              <label class="form-label" for="{{ form.password.id_for_label }}">Password <span class="text-danger">*</span></label>
+              {{ form.password }}
+              {% if form.password.errors %}<div class="text-danger small mt-1">{{ form.password.errors.0 }}</div>{% endif %}
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label" for="{{ form.password_confirm.id_for_label }}">Confirm Password <span class="text-danger">*</span></label>
+              {{ form.password_confirm }}
+              {% if form.password_confirm.errors %}<div class="text-danger small mt-1">{{ form.password_confirm.errors.0 }}</div>{% endif %}
+            </div>
+          </div>
+
+          <hr class="my-4">
+          <h5 class="fw-bold mb-3"><i class="bi bi-compass text-primary me-2"></i>Community Preferences</h5>
+
+          <div class="mb-3">
+            <label class="form-label" for="{{ form.profile_type.id_for_label }}">Profile Type <span class="text-danger">*</span></label>
+            {{ form.profile_type }}
+            <div class="form-text small">{{ form.profile_type.help_text }}</div>
+            {% if form.profile_type.errors %}<div class="text-danger small mt-1">{{ form.profile_type.errors.0 }}</div>{% endif %}
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label" for="{{ form.interests.id_for_label }}">Interests</label>
+            {{ form.interests }}
+            <div class="form-text small">{{ form.interests.help_text }}</div>
+            {% if form.interests.errors %}<div class="text-danger small mt-1">{{ form.interests.errors.0 }}</div>{% endif %}
+          </div>
+
+          <div class="row g-3 mb-4">
+            <div class="col-sm-6">
+              <label class="form-label" for="{{ form.preferred_city.id_for_label }}">Preferred City</label>
+              {{ form.preferred_city }}
+              {% if form.preferred_city.errors %}<div class="text-danger small mt-1">{{ form.preferred_city.errors.0 }}</div>{% endif %}
+            </div>
+            <div class="col-sm-6">
+              <label class="form-label" for="{{ form.preferred_area.id_for_label }}">Preferred Locality</label>
+              {{ form.preferred_area }}
+              {% if form.preferred_area.errors %}<div class="text-danger small mt-1">{{ form.preferred_area.errors.0 }}</div>{% endif %}
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary w-100 py-2 rounded-pill fw-semibold shadow-sm">
+            Complete Registration & Explore
+          </button>
+        </form>
+
+        <div class="text-center mt-4">
+          <p class="text-muted small">
+            Already have an account? <a href="{% url 'accounts:login' %}" class="fw-semibold text-primary">Log In here</a>
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

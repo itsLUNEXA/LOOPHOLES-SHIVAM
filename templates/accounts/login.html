@@ -1,0 +1,163 @@
+{% extends 'base.html' %}
+
+{% block title %}{% if login_type == 'admin' %}Admin Login{% else %}User Login{% endif %} | Vibento{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-md-6 col-lg-5">
+      <div class="form-card shadow-sm border-0 rounded-4 p-4 p-md-5 bg-white">
+        
+        <!-- Two Clearly Labeled Login Options -->
+        <div class="d-flex p-1 bg-light rounded-pill mb-4 border" role="tablist">
+          <a href="?type=user{% if next %}&next={{ next|urlencode }}{% endif %}" 
+             id="tabUser" 
+             role="tab"
+             aria-selected="{% if login_type == 'user' %}true{% else %}false{% endif %}"
+             class="btn btn-sm w-50 rounded-pill fw-bold py-2 transition text-decoration-none text-center {% if login_type == 'user' %}btn-primary shadow-sm text-white{% else %}text-muted bg-transparent{% endif %}"
+             onclick="selectLoginMode('user'); return false;">
+            <i class="bi bi-person me-1"></i> User Login
+          </a>
+          <a href="?type=admin{% if next %}&next={{ next|urlencode }}{% endif %}" 
+             id="tabAdmin" 
+             role="tab"
+             aria-selected="{% if login_type == 'admin' %}true{% else %}false{% endif %}"
+             class="btn btn-sm w-50 rounded-pill fw-bold py-2 transition text-decoration-none text-center {% if login_type == 'admin' %}btn-dark shadow-sm text-white{% else %}text-muted bg-transparent{% endif %}"
+             onclick="selectLoginMode('admin'); return false;">
+            <i class="bi bi-shield-lock me-1"></i> Admin Login
+          </a>
+        </div>
+
+        <!-- Header Section -->
+        <div class="text-center mb-4">
+          <div id="loginIconWrapper" class="d-inline-flex p-3 rounded-circle mb-3 {% if login_type == 'admin' %}bg-dark-subtle text-dark{% else %}bg-primary-subtle text-primary{% endif %}">
+            <i id="loginIcon" class="bi {% if login_type == 'admin' %}bi-shield-lock-fill{% else %}bi-person-check-fill{% endif %} fs-2"></i>
+          </div>
+          <h2 id="loginTitle" class="fw-bold mb-1">{% if login_type == 'admin' %}Admin Login{% else %}User Login{% endif %}</h2>
+          <p id="loginSubtitle" class="text-muted small mb-0">
+            {% if login_type == 'admin' %}
+              Sign in with your staff account to access the central admin dashboard.
+            {% else %}
+              Sign in with your email to discover community events and organize your own.
+            {% endif %}
+          </p>
+        </div>
+
+        <!-- Admin Permission Notice -->
+        <div id="adminNotice" class="alert alert-warning py-2 px-3 small rounded-3 mb-3 d-flex align-items-center gap-2 {% if login_type != 'admin' %}d-none{% endif %}">
+          <i class="bi bi-exclamation-triangle-fill text-warning flex-shrink-0"></i>
+          <div><strong>Staff only:</strong> Regular community members must use the User Login option.</div>
+        </div>
+
+        <form method="post" id="loginForm" novalidate>
+          {% csrf_token %}
+          <input type="hidden" name="login_type" id="loginTypeInput" value="{{ login_type }}">
+          <input type="hidden" name="next" value="{{ next }}">
+
+          {% if form.non_field_errors %}
+            <div class="alert alert-danger py-2 px-3 rounded-3 mb-3">
+              {% for error in form.non_field_errors %}
+                <div class="small fw-semibold"><i class="bi bi-exclamation-octagon me-1"></i>{{ error }}</div>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+          <div class="mb-3">
+            <label class="form-label small fw-bold" for="{{ form.email.id_for_label }}">Email Address</label>
+            {{ form.email }}
+            {% if form.email.errors %}
+              <div class="text-danger small mt-1">{{ form.email.errors.0 }}</div>
+            {% endif %}
+          </div>
+
+          <div class="mb-4">
+            <label class="form-label small fw-bold" for="{{ form.password.id_for_label }}">Password</label>
+            {{ form.password }}
+            {% if form.password.errors %}
+              <div class="text-danger small mt-1">{{ form.password.errors.0 }}</div>
+            {% endif %}
+          </div>
+
+          <button type="submit" id="submitButton" class="btn w-100 py-2 rounded-pill fw-semibold shadow-sm {% if login_type == 'admin' %}btn-dark{% else %}btn-primary{% endif %}">
+            <span id="buttonText">{% if login_type == 'admin' %}Log In to Admin Dashboard{% else %}Log In as User{% endif %}</span>
+            <i class="bi bi-arrow-right ms-1"></i>
+          </button>
+        </form>
+
+        <!-- Footer Navigation Links -->
+        <div id="signupFooter" class="text-center mt-4 pt-3 border-top {% if login_type == 'admin' %}d-none{% endif %}">
+          <p class="text-muted small mb-0">
+            Don't have an account? <a href="{% url 'accounts:signup' %}" class="fw-semibold text-primary">Create an account</a>
+          </p>
+        </div>
+
+        <div id="adminFooter" class="text-center mt-4 pt-3 border-top {% if login_type != 'admin' %}d-none{% endif %}">
+          <p class="text-muted small mb-0">
+            Not a site administrator? <a href="javascript:void(0)" onclick="selectLoginMode('user')" class="fw-semibold text-primary">Switch to User Login</a>
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function selectLoginMode(mode) {
+  const loginTypeInput = document.getElementById('loginTypeInput');
+  const tabUser = document.getElementById('tabUser');
+  const tabAdmin = document.getElementById('tabAdmin');
+  const loginTitle = document.getElementById('loginTitle');
+  const loginSubtitle = document.getElementById('loginSubtitle');
+  const loginIcon = document.getElementById('loginIcon');
+  const loginIconWrapper = document.getElementById('loginIconWrapper');
+  const submitButton = document.getElementById('submitButton');
+  const buttonText = document.getElementById('buttonText');
+  const adminNotice = document.getElementById('adminNotice');
+  const signupFooter = document.getElementById('signupFooter');
+  const adminFooter = document.getElementById('adminFooter');
+
+  loginTypeInput.value = mode;
+
+  if (mode === 'admin') {
+    tabAdmin.className = 'btn btn-sm w-50 rounded-pill fw-bold py-2 transition text-decoration-none text-center btn-dark shadow-sm text-white';
+    tabUser.className = 'btn btn-sm w-50 rounded-pill fw-bold py-2 transition text-decoration-none text-center text-muted bg-transparent';
+    tabAdmin.setAttribute('aria-selected', 'true');
+    tabUser.setAttribute('aria-selected', 'false');
+    loginTitle.innerText = 'Admin Login';
+    loginSubtitle.innerText = 'Sign in with your staff account to access the central admin dashboard.';
+    loginIcon.className = 'bi bi-shield-lock-fill fs-2';
+    loginIconWrapper.className = 'd-inline-flex p-3 rounded-circle mb-3 bg-dark-subtle text-dark';
+    submitButton.className = 'btn w-100 py-2 rounded-pill fw-semibold shadow-sm btn-dark';
+    buttonText.innerText = 'Log In to Admin Dashboard';
+    adminNotice.classList.remove('d-none');
+    signupFooter.classList.add('d-none');
+    adminFooter.classList.remove('d-none');
+    try {
+      const url = new URL(window.location);
+      url.searchParams.set('type', 'admin');
+      history.replaceState(null, '', url.toString());
+    } catch (e) {}
+  } else {
+    tabUser.className = 'btn btn-sm w-50 rounded-pill fw-bold py-2 transition text-decoration-none text-center btn-primary shadow-sm text-white';
+    tabAdmin.className = 'btn btn-sm w-50 rounded-pill fw-bold py-2 transition text-decoration-none text-center text-muted bg-transparent';
+    tabUser.setAttribute('aria-selected', 'true');
+    tabAdmin.setAttribute('aria-selected', 'false');
+    loginTitle.innerText = 'User Login';
+    loginSubtitle.innerText = 'Sign in with your email to discover community events and organize your own.';
+    loginIcon.className = 'bi bi-person-check-fill fs-2';
+    loginIconWrapper.className = 'd-inline-flex p-3 rounded-circle mb-3 bg-primary-subtle text-primary';
+    submitButton.className = 'btn w-100 py-2 rounded-pill fw-semibold shadow-sm btn-primary';
+    buttonText.innerText = 'Log In as User';
+    adminNotice.classList.add('d-none');
+    signupFooter.classList.remove('d-none');
+    adminFooter.classList.add('d-none');
+    try {
+      const url = new URL(window.location);
+      url.searchParams.set('type', 'user');
+      history.replaceState(null, '', url.toString());
+    } catch (e) {}
+  }
+}
+</script>
+{% endblock %}

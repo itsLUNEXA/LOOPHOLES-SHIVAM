@@ -1,0 +1,178 @@
+{% extends 'base.html' %}
+
+{% block title %}Organizer Dashboard | Vibento{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+  <!-- Header & Actions -->
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+    <div>
+      <h2 class="fw-bold mb-1">Organizer Dashboard</h2>
+      <p class="text-muted small mb-0">Track your event submissions, admin moderation status, and feedback.</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{% url 'events:event_create' %}" class="btn btn-primary rounded-pill px-3 shadow-sm">
+        <i class="bi bi-plus-circle me-1"></i> Create Event
+      </a>
+      <a href="{% url 'events:whatsapp_submission' %}" class="btn btn-outline-success rounded-pill px-3">
+        <i class="bi bi-whatsapp me-1"></i> Submit WhatsApp Event
+      </a>
+    </div>
+  </div>
+
+  <!-- Review rule callout banner -->
+  <div class="alert alert-info rounded-4 border-0 shadow-sm d-flex align-items-center gap-3 p-3 mb-4">
+    <i class="bi bi-info-circle-fill fs-3 text-info"></i>
+    <div class="small">
+      <strong>Moderation Policy:</strong> All new submissions and important edits to published events are verified by our team.
+      Editing an approved event will temporarily return it to <em>Pending Review</em> until re-approved to ensure community safety.
+    </div>
+  </div>
+
+  <!-- Stats Grid -->
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-md-4 col-lg-2">
+      <div class="stat-card">
+        <div class="text-muted small">Total</div>
+        <div class="stat-number text-dark">{{ counts.total }}</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+      <div class="stat-card">
+        <div class="text-muted small">Approved & Live</div>
+        <div class="stat-number text-success">{{ counts.approved }}</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+      <div class="stat-card">
+        <div class="text-muted small">Pending Review</div>
+        <div class="stat-number text-warning">{{ counts.pending }}</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+      <div class="stat-card">
+        <div class="text-muted small">Needs Correction</div>
+        <div class="stat-number text-warning-emphasis">{{ counts.correction }}</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+      <div class="stat-card">
+        <div class="text-muted small">Rejected</div>
+        <div class="stat-number text-danger">{{ counts.rejected }}</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-4 col-lg-2">
+      <div class="stat-card">
+        <div class="text-muted small">Cancelled</div>
+        <div class="stat-number text-secondary">{{ counts.cancelled }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Events List -->
+  <div class="card border-0 shadow-sm rounded-4 overflow-hidden bg-white mb-5">
+    <div class="card-header bg-white py-3 border-bottom d-flex align-items-center justify-content-between">
+      <h5 class="fw-bold mb-0">My Submissions</h5>
+      <span class="text-muted small">{{ events.count }} total record{{ events.count|pluralize }}</span>
+    </div>
+
+    {% if events %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light small text-uppercase text-muted">
+            <tr>
+              <th class="ps-4">Event Details</th>
+              <th>Category</th>
+              <th>Date & Location</th>
+              <th>Source</th>
+              <th>Moderation</th>
+              <th>Status</th>
+              <th class="text-end pe-4">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for event in events %}
+              <tr>
+                <td class="ps-4">
+                  <div class="fw-bold text-dark">{{ event.title }}</div>
+                  <small class="text-muted">Host: {{ event.organizer_display_name }}</small>
+                  {% if event.reviewer_feedback %}
+                    <div class="mt-1 small text-warning-emphasis bg-warning-subtle p-2 rounded-2 border border-warning-subtle">
+                      <strong><i class="bi bi-chat-dots me-1"></i>Feedback:</strong> {{ event.reviewer_feedback }}
+                    </div>
+                  {% endif %}
+                </td>
+                <td>
+                  <span class="badge bg-light text-dark border">{{ event.category.name }}</span>
+                </td>
+                <td class="small">
+                  <div>{{ event.start_datetime|date:"M d, Y • h:i A" }}</div>
+                  <div class="text-muted">{{ event.area }}, {{ event.city }}</div>
+                </td>
+                <td>
+                  {% if event.source_type == 'whatsapp' %}
+                    <span class="badge badge-whatsapp-source rounded-pill small">WhatsApp</span>
+                  {% else %}
+                    <span class="badge badge-organizer-source rounded-pill small">Standard</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if event.review_status == 'approved' %}
+                    <span class="badge badge-status-approved rounded-pill px-2 py-1">Approved</span>
+                  {% elif event.review_status == 'pending' %}
+                    <span class="badge badge-status-pending rounded-pill px-2 py-1">Pending</span>
+                  {% elif event.review_status == 'correction' %}
+                    <span class="badge badge-status-correction rounded-pill px-2 py-1">Needs Correction</span>
+                  {% elif event.review_status == 'rejected' %}
+                    <span class="badge badge-status-rejected rounded-pill px-2 py-1">Rejected</span>
+                  {% else %}
+                    <span class="badge bg-secondary rounded-pill px-2 py-1">Draft</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if event.event_status == 'cancelled' %}
+                    <span class="badge badge-status-cancelled rounded-pill px-2 py-1">Cancelled</span>
+                  {% else %}
+                    <span class="badge bg-info-subtle text-info-emphasis rounded-pill px-2 py-1">Scheduled</span>
+                  {% endif %}
+                </td>
+                <td class="text-end pe-4">
+                  <div class="btn-group btn-group-sm">
+                    <a href="{% url 'events:event_preview' slug=event.slug %}" class="btn btn-outline-secondary" title="Preview Submission">
+                      <i class="bi bi-eye"></i>
+                    </a>
+                    {% if event.event_status != 'cancelled' %}
+                      <a href="{% url 'events:event_edit' slug=event.slug %}" class="btn btn-outline-primary" title="Edit Event">
+                        <i class="bi bi-pencil"></i>
+                      </a>
+                      <a href="{% url 'events:event_cancel' slug=event.slug %}" class="btn btn-outline-danger" title="Cancel Event">
+                        <i class="bi bi-x-circle"></i>
+                      </a>
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-center py-5">
+        <i class="bi bi-folder-x fs-1 text-muted mb-2 d-block"></i>
+        <h5 class="fw-bold">No event submissions yet</h5>
+        <p class="text-muted small mx-auto" style="max-width: 400px;">
+          Submit your first event or forward a WhatsApp gathering to share it with your local community.
+        </p>
+        <div class="d-flex justify-content-center gap-2 mt-3">
+          <a href="{% url 'events:event_create' %}" class="btn btn-primary btn-sm rounded-pill px-3">
+            <i class="bi bi-plus-circle me-1"></i> Submit Standard Event
+          </a>
+          <a href="{% url 'events:whatsapp_submission' %}" class="btn btn-outline-success btn-sm rounded-pill px-3">
+            <i class="bi bi-whatsapp me-1"></i> Submit WhatsApp Event
+          </a>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

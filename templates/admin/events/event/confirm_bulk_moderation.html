@@ -1,0 +1,110 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static %}
+
+{% block content %}
+<div style="max-width: 900px; margin: 20px auto; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 28px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+  
+  <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0;">
+    {% if action_type == 'approved' %}
+      <div style="background: #dcfce7; color: #16a34a; width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.4rem;">
+        <i class="bi bi-check-circle-fill"></i>
+      </div>
+    {% elif action_type == 'correction' %}
+      <div style="background: #fef3c7; color: #d97706; width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.4rem;">
+        <i class="bi bi-pencil-square"></i>
+      </div>
+    {% else %}
+      <div style="background: #fee2e2; color: #dc2626; width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.4rem;">
+        <i class="bi bi-x-circle-fill"></i>
+      </div>
+    {% endif %}
+    <div>
+      <h2 style="margin: 0; font-size: 1.35rem; font-weight: 700; color: #0f172a;">{{ action_title }}</h2>
+      <p style="margin: 4px 0 0 0; color: #64748b; font-size: 0.9rem;">
+        Confirm moderation decision for the selected event submission(s).
+      </p>
+    </div>
+  </div>
+
+  <form method="post" action="">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="{{ action }}">
+    <input type="hidden" name="confirmed" value="yes">
+    <input type="hidden" name="action_type" value="{{ action_type }}">
+    {% for obj in events %}
+      <input type="hidden" name="_selected_action" value="{{ obj.pk }}">
+    {% endfor %}
+
+    <!-- Selected Events List -->
+    <div style="margin-bottom: 24px;">
+      <h4 style="font-size: 0.95rem; font-weight: 700; color: #334155; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.04em;">
+        Selected Events ({{ events|length }}):
+      </h4>
+      <div style="border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 0.88rem;">
+          <thead>
+            <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0; color: #475569; text-align: left;">
+              <th style="padding: 10px 14px;">Title</th>
+              <th style="padding: 10px 14px;">Organizer / Submitter</th>
+              <th style="padding: 10px 14px;">Current Status</th>
+              <th style="padding: 10px 14px;">Event Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for event in events %}
+            <tr style="border-bottom: 1px solid #f1f5f9;">
+              <td style="padding: 10px 14px; font-weight: 600; color: #0f172a;">{{ event.title }}</td>
+              <td style="padding: 10px 14px; color: #475569;">{{ event.submitted_by.email|default:event.submitted_by.username }}</td>
+              <td style="padding: 10px 14px;">
+                <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600;
+                  {% if event.review_status == 'pending' %}background: #fef3c7; color: #92400e;
+                  {% elif event.review_status == 'approved' %}background: #dcfce7; color: #166534;
+                  {% elif event.review_status == 'correction' %}background: #fed7aa; color: #9a3412;
+                  {% else %}background: #fee2e2; color: #991b1b;{% endif %}">
+                  {{ event.get_review_status_display }}
+                </span>
+              </td>
+              <td style="padding: 10px 14px; color: #64748b;">{{ event.start_datetime|date:"M d, Y" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Reviewer Feedback Field -->
+    <div style="margin-bottom: 24px;">
+      <label for="reviewer_feedback_field" style="display: block; font-weight: 700; font-size: 0.95rem; color: #1e293b; margin-bottom: 8px;">
+        Reviewer Feedback:
+        {% if requires_feedback %}
+          <span style="color: #ef4444;">* (Required for rejection / correction)</span>
+        {% else %}
+          <span style="color: #64748b; font-weight: 400; font-size: 0.85rem;">(Optional)</span>
+        {% endif %}
+      </label>
+      <textarea id="reviewer_feedback_field" 
+                name="reviewer_feedback" 
+                rows="4" 
+                style="width: 100%; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; font-family: inherit; font-size: 0.92rem; box-sizing: border-box;"
+                placeholder="{% if requires_feedback %}Explain clearly what needs correction or why the submission is rejected. This feedback will be recorded and visible to organizers...{% else %}Optional approval comments...{% endif %}"
+                {% if requires_feedback %}required{% endif %}></textarea>
+    </div>
+
+    <!-- Actions -->
+    <div style="display: flex; gap: 12px; align-items: center;">
+      <button type="submit" 
+              style="padding: 10px 24px; border-radius: 8px; font-weight: 700; font-size: 0.95rem; border: none; cursor: pointer; color: #ffffff;
+                {% if action_type == 'approved' %}background: #10b981;
+                {% elif action_type == 'correction' %}background: #f59e0b;
+                {% else %}background: #ef4444;{% endif %}">
+        Confirm &amp; Apply to {{ events|length }} Event(s)
+      </button>
+      <a href="{% url 'admin:events_event_changelist' %}?review_status__exact=pending" 
+         style="padding: 10px 20px; border-radius: 8px; font-weight: 600; font-size: 0.95rem; background: #f1f5f9; color: #475569; text-decoration: none; border: 1px solid #cbd5e1;">
+        Cancel / Go Back
+      </a>
+    </div>
+
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,25 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Python cache and compiled bytecode
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Local databases and SQLite sidecars
+db.sqlite3
+db.sqlite3-journal
+db.sqlite3-shm
+db.sqlite3-wal
+
+# Media uploads and collected static assets (source static/ remains tracked)
+media/
+staticfiles/
+
+# Logs
+*.log

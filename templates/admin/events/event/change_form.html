@@ -1,0 +1,91 @@
+{% extends "admin/change_form.html" %}
+{% load i18n admin_urls static %}
+
+{% block form_top %}
+{{ block.super }}
+{% if original and original.pk %}
+<div class="moderation-panel-card mb-4" style="background: #ffffff; border: 2px solid #cbd5e1; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); margin-bottom: 24px;">
+  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #e2e8f0;">
+    <div>
+      <h3 style="margin: 0; font-size: 1.2rem; font-weight: 700; color: #0f172a; display: flex; align-items: center; gap: 8px;">
+        <i class="bi bi-shield-check text-primary"></i> Event Moderation Controls
+      </h3>
+      <p style="margin: 4px 0 0 0; color: #64748b; font-size: 0.88rem;">
+        Inspect submitted details below, provide reviewer feedback, and select a moderation decision.
+      </p>
+    </div>
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <span style="font-size: 0.82rem; font-weight: 600; text-transform: uppercase; color: #64748b;">Current Status:</span>
+      {% if original.review_status == 'approved' %}
+        <span style="background: #10b981; color: white; padding: 4px 10px; border-radius: 6px; font-size: 0.82rem; font-weight: 700;">Approved</span>
+      {% elif original.review_status == 'pending' %}
+        <span style="background: #f59e0b; color: #000; padding: 4px 10px; border-radius: 6px; font-size: 0.82rem; font-weight: 700;">Pending Review</span>
+      {% elif original.review_status == 'correction' %}
+        <span style="background: #fd7e14; color: white; padding: 4px 10px; border-radius: 6px; font-size: 0.82rem; font-weight: 700;">Needs Correction</span>
+      {% elif original.review_status == 'rejected' %}
+        <span style="background: #ef4444; color: white; padding: 4px 10px; border-radius: 6px; font-size: 0.82rem; font-weight: 700;">Rejected</span>
+      {% else %}
+        <span style="background: #64748b; color: white; padding: 4px 10px; border-radius: 6px; font-size: 0.82rem; font-weight: 700;">Draft</span>
+      {% endif %}
+      {% if original.event_status == 'cancelled' %}
+        <span style="background: #b91c1c; color: white; padding: 4px 10px; border-radius: 6px; font-size: 0.82rem; font-weight: 700;">Cancelled</span>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if original.reviewed_by or original.reviewed_at %}
+  <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 0.85rem; color: #475569; display: flex; gap: 20px; flex-wrap: wrap;">
+    {% if original.reviewed_by %}
+      <div><strong>Reviewed By:</strong> {{ original.reviewed_by.username }} ({{ original.reviewed_by.email }})</div>
+    {% endif %}
+    {% if original.reviewed_at %}
+      <div><strong>Reviewed At:</strong> {{ original.reviewed_at|date:"M d, Y H:i" }}</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div style="margin-bottom: 16px;">
+    <label for="moderation_feedback_input" style="display: block; font-weight: 600; font-size: 0.9rem; color: #334155; margin-bottom: 6px;">
+      Reviewer Feedback:
+      <span style="font-weight: 400; color: #64748b; font-size: 0.82rem;">(Mandatory for Rejection or Requesting Correction; optional for Approval)</span>
+    </label>
+    <textarea id="moderation_feedback_input" 
+              name="moderation_feedback" 
+              rows="3" 
+              style="width: 100%; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px; font-family: inherit; font-size: 0.9rem; color: #1e293b; box-sizing: border-box;"
+              placeholder="Provide constructive feedback for the organizer (required for rejection or correction)...">{{ original.reviewer_feedback }}</textarea>
+  </div>
+
+  <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+    <button type="submit" 
+            name="_moderate_action" 
+            value="approved" 
+            class="btn-moderation btn-approve"
+            style="background: #10b981; color: #ffffff; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 700; font-size: 0.95rem; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+      <i class="bi bi-check-circle-fill"></i> Approve Event
+    </button>
+    <button type="submit" 
+            name="_moderate_action" 
+            value="correction" 
+            class="btn-moderation btn-correction"
+            style="background: #f59e0b; color: #ffffff; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 700; font-size: 0.95rem; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+      <i class="bi bi-pencil-square"></i> Request Correction
+    </button>
+    <button type="submit" 
+            name="_moderate_action" 
+            value="rejected" 
+            class="btn-moderation btn-reject"
+            style="background: #ef4444; color: #ffffff; border: none; padding: 10px 20px; border-radius: 8px; font-weight: 700; font-size: 0.95rem; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
+      <i class="bi bi-x-circle-fill"></i> Reject Event
+    </button>
+    {% if original.slug %}
+    <a href="{% url 'events:event_preview' slug=original.slug %}" 
+       target="_blank" 
+       style="margin-left: auto; background: #f1f5f9; border: 1px solid #cbd5e1; color: #334155; padding: 9px 16px; border-radius: 8px; font-weight: 600; font-size: 0.88rem; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;">
+      <i class="bi bi-eye"></i> View Public Preview <i class="bi bi-box-arrow-up-right" style="font-size: 0.75rem;"></i>
+    </a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

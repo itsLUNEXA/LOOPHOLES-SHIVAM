@@ -1,0 +1,30 @@
+<footer>
+  <div class="container">
+    <div class="row g-4 align-items-center">
+      <div class="col-md-6">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <i class="bi bi-geo-alt-fill text-primary fs-5"></i>
+          <span class="fw-bold fs-5">Vibento</span>
+        </div>
+        <p class="text-muted mb-0 small" style="max-width: 480px;">
+          Discover nearby events. Connect with your community. Empowering students, professionals, entrepreneurs, and hobbyists to discover and host local gatherings.
+          All event registrations and ticketing occur directly on the organizer's external platform.
+        </p>
+      </div>
+      <div class="col-md-6 text-md-end">
+        <ul class="list-inline mb-2 small">
+          <li class="list-inline-item"><a href="{% url 'events:event_list' %}" class="text-decoration-none text-muted">Browse Events</a></li>
+          <li class="list-inline-item text-muted">•</li>
+          <li class="list-inline-item"><a href="{% url 'events:organizer_dashboard' %}" class="text-decoration-none text-muted">Organizer Hub</a></li>
+          <li class="list-inline-item text-muted">•</li>
+          <li class="list-inline-item"><a href="{% url 'events:whatsapp_submission' %}" class="text-decoration-none text-muted">WhatsApp Submission</a></li>
+          <li class="list-inline-item text-muted">•</li>
+          <li class="list-inline-item"><a href="{% url 'admin:index' %}" class="text-decoration-none text-muted">Staff Moderation</a></li>
+        </ul>
+        <div class="text-muted small">
+          &copy; {% now "Y" %} Vibento. Built with Django & Supabase PostgreSQL.
+        </div>
+      </div>
+    </div>
+  </div>
+</footer>

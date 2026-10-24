@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+
+{% block title %}Select Interests | Vibento{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+      <div class="form-card text-center">
+        <div class="d-inline-flex p-3 rounded-circle bg-success-subtle text-success mb-3">
+          <i class="bi bi-stars fs-2"></i>
+        </div>
+        <h2 class="fw-bold mb-2">What are you curious about?</h2>
+        <p class="text-muted small mb-4">
+          Select topics you are interested in. You can always change these later in your profile.
+        </p>
+
+        <form method="post" novalidate class="text-start">
+          {% csrf_token %}
+
+          <div class="mb-4">
+            <label class="form-label fw-bold mb-3 d-block">Popular Community Categories</label>
+            <div class="d-flex flex-wrap gap-2">
+              {% for val, text in form.selected_interests.field.choices %}
+                <label class="interest-chip">
+                  <input type="checkbox" name="selected_interests" value="{{ val }}" class="btn-check" id="interest_{{ forloop.counter }}"
+                    {% if val in form.selected_interests.value %}checked{% endif %}>
+                  <label class="btn btn-outline-primary btn-sm rounded-pill px-3 py-2 fw-semibold" for="interest_{{ forloop.counter }}">
+                    {{ text }}
+                  </label>
+                </label>
+              {% endfor %}
+            </div>
+          </div>
+
+          <div class="mb-4">
+            <label class="form-label fw-bold" for="{{ form.custom_interests.id_for_label }}">
+              {{ form.custom_interests.label }}
+            </label>
+            {{ form.custom_interests }}
+            <div class="form-text small">Add any custom hobbies or niche interests separated by commas.</div>
+          </div>
+
+          <div class="d-flex align-items-center justify-content-between pt-3 border-top">
+            <a href="{% url 'events:event_list' %}" class="text-muted small text-decoration-none">
+              Skip for now &rarr;
+            </a>
+            <button type="submit" class="btn btn-primary rounded-pill px-4 shadow-sm">
+              Save & Explore Events <i class="bi bi-arrow-right ms-1"></i>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

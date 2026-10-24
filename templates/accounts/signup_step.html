@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+
+{% block title %}Sign Up - Step {{ step }} of {{ total_steps }} | Vibento{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-md-7 col-lg-5">
+      <div class="form-card">
+        <!-- Progress Bar -->
+        <div class="mb-4">
+          <div class="d-flex justify-content-between align-items-center mb-1">
+            <span class="text-uppercase text-muted fw-bold" style="font-size: 0.75rem; letter-spacing: 0.05em;">Step {{ step }} of {{ total_steps }}</span>
+            <span class="text-primary fw-semibold small">{% if step == 1 %}Email{% elif step == 2 %}Age{% elif step == 3 %}User Type{% elif step == 4 %}Location{% else %}Security{% endif %}</span>
+          </div>
+          <div class="progress" style="height: 6px;">
+            <div class="progress-bar bg-primary" role="progressbar" style="width: calc(({{ step }} / {{ total_steps }}) * 100%);"></div>
+          </div>
+        </div>
+
+        <div class="mb-4 text-center">
+          <h3 class="fw-bold mb-1">{{ step_title }}</h3>
+          <p class="text-muted small">Join your local community to discover or host neighborhood events.</p>
+        </div>
+
+        <form method="post" novalidate>
+          {% csrf_token %}
+          <input type="hidden" name="step" value="{{ step }}">
+
+          {% if form.non_field_errors %}
+            <div class="alert alert-danger py-2">
+              {% for error in form.non_field_errors %}
+                <div class="small">{{ error }}</div>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+          {% for field in form %}
+            <div class="mb-3">
+              <label class="form-label" for="{{ field.id_for_label }}">
+                {{ field.label }}
+                {% if field.field.required %}<span class="text-danger">*</span>{% endif %}
+              </label>
+              {{ field }}
+              {% if field.help_text %}
+                <div class="form-text small text-muted">{{ field.help_text }}</div>
+              {% endif %}
+              {% if field.errors %}
+                <div class="text-danger small mt-1 fw-semibold">{{ field.errors.0 }}</div>
+              {% endif %}
+            </div>
+          {% endfor %}
+
+          <!-- Step Buttons: Back & Next / Create -->
+          <div class="d-flex gap-2 mt-4 pt-2">
+            {% if step > 1 %}
+              <button type="submit" name="action" value="back" formnovalidate class="btn btn-outline-secondary rounded-pill px-4">
+                <i class="bi bi-arrow-left me-1"></i> Back
+              </button>
+            {% endif %}
+
+            {% if step < total_steps %}
+              <button type="submit" name="action" value="next" class="btn btn-primary rounded-pill px-4 flex-grow-1 shadow-sm">
+                Next <i class="bi bi-arrow-right ms-1"></i>
+              </button>
+            {% else %}
+              <button type="submit" name="action" value="submit" class="btn btn-primary rounded-pill px-4 flex-grow-1 shadow-sm">
+                <i class="bi bi-check-circle me-1"></i> Create Account
+              </button>
+            {% endif %}
+          </div>
+        </form>
+
+        <div class="text-center mt-4 pt-3 border-top">
+          <p class="text-muted small mb-0">
+            Already have an account? <a href="{% url 'accounts:login' %}" class="fw-semibold text-primary">Log in here</a>
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

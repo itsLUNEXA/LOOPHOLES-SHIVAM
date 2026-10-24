@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+
+{% block title %}Cancel Event: {{ event.title }} | Vibento{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-md-7 col-lg-6">
+      <div class="form-card text-center">
+        <div class="d-inline-flex p-3 rounded-circle bg-danger-subtle text-danger mb-3">
+          <i class="bi bi-exclamation-triangle-fill fs-1"></i>
+        </div>
+        <h3 class="fw-bold mb-2">Cancel Event</h3>
+        <p class="text-muted small mb-4">
+          Are you sure you want to cancel <strong>"{{ event.title }}"</strong>?
+        </p>
+
+        <div class="alert alert-warning text-start small mb-4">
+          <strong>What happens when you cancel:</strong>
+          <ul class="mb-0 mt-2 ps-3">
+            <li>The event is removed from active discovery search results.</li>
+            <li>Its detail page will clearly display a <em>"Cancelled"</em> badge.</li>
+            <li>External registration and RSVP links will be disabled.</li>
+          </ul>
+        </div>
+
+        <form method="post">
+          {% csrf_token %}
+          <div class="d-flex justify-content-center gap-2">
+            <a href="{% url 'events:organizer_dashboard' %}" class="btn btn-light rounded-pill px-4">
+              Keep Event Active
+            </a>
+            <button type="submit" class="btn btn-danger rounded-pill px-4 shadow-sm">
+              Confirm Cancellation
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
