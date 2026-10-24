@@ -67,21 +67,41 @@ def event_list(request):
     # Date range filters
     today = timezone.localdate()
     if date_range == 'today':
-        events = events.filter(start_datetime__date=today)
+        events = events.filter(
+            start_datetime__date__lte=today,
+            end_datetime__date__gte=today
+        )
     elif date_range == 'tomorrow':
-        events = events.filter(start_datetime__date=today + timedelta(days=1))
+        tomorrow = today + timedelta(days=1)
+        events = events.filter(
+            start_datetime__date__lte=tomorrow,
+            end_datetime__date__gte=tomorrow
+        )
     elif date_range == 'this_weekend':
-        # Saturday and Sunday of current week
+        # Saturday and Sunday
         weekday = today.weekday()  # Monday is 0, Sunday is 6
-        saturday = today + timedelta(days=(5 - weekday))
-        sunday = today + timedelta(days=(6 - weekday))
-        events = events.filter(start_datetime__date__range=[saturday, sunday])
+        if weekday == 6:  # Sunday
+            saturday = today - timedelta(days=1)
+            sunday = today
+        elif weekday == 5:  # Saturday
+            saturday = today
+            sunday = today + timedelta(days=1)
+        else:  # Monday through Friday
+            saturday = today + timedelta(days=(5 - weekday))
+            sunday = saturday + timedelta(days=1)
+        events = events.filter(
+            start_datetime__date__lte=sunday,
+            end_datetime__date__gte=saturday
+        )
     elif date_range == 'this_week':
-        events = events.filter(start_datetime__date__range=[today, today + timedelta(days=7)])
+        events = events.filter(
+            start_datetime__date__lte=today + timedelta(days=7),
+            end_datetime__date__gte=today
+        )
     elif date_range == 'this_month':
         events = events.filter(
-            start_datetime__year=today.year,
-            start_datetime__month=today.month
+            start_datetime__date__lte=today + timedelta(days=30),
+            end_datetime__date__gte=today
         )
 
     # Custom date picker filtering
@@ -104,18 +124,28 @@ def event_list(request):
 
     # Context helpers
     categories = Category.objects.all()
-    available_cities = Event.objects.filter(
+    raw_cities = Event.objects.filter(
         review_status='approved',
         event_status='scheduled',
         end_datetime__gte=now
     ).values_list('city', flat=True).distinct()
+    
+    # Normalize city names to avoid duplicate cases (e.g. 'delhi' vs 'Delhi')
+    city_dict = {}
+    for c in raw_cities:
+        if c and c.strip():
+            clean = c.strip()
+            key = clean.lower()
+            if key not in city_dict or clean[0].isupper():
+                city_dict[key] = clean.title()
+    available_cities = sorted(list(city_dict.values()))
 
     has_filters = any([q, category_slug, city, area, pricing, date_range, start_date_str, end_date_str])
 
     return render(request, 'events/event_list.html', {
         'events': page_obj,
         'categories': categories,
-        'available_cities': sorted(list(set(available_cities))),
+        'available_cities': available_cities,
         'selected_category': category_slug,
         'selected_city': city,
         'selected_area': area,

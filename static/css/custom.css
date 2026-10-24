@@ -65,8 +65,25 @@ main {
   border-radius: 50%;
 }
 
+/* Filter Section Elevation */
+.filter-card {
+  position: relative;
+  z-index: 50;
+  pointer-events: auto;
+}
+
+.filter-card select,
+.filter-card button,
+.filter-card a {
+  position: relative;
+  z-index: 51;
+  pointer-events: auto;
+}
+
 /* Event Cards */
 .event-card {
+  position: relative;
+  z-index: 1;
   border: 1px solid var(--border-light);
   border-radius: 1rem;
   background: var(--card-bg);
@@ -75,6 +92,14 @@ main {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+
+.card-title-link {
+  transition: color 0.15s ease-in-out;
+}
+
+.card-title-link:hover {
+  color: var(--primary-accent) !important;
 }
 
 .event-card:hover {

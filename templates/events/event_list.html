@@ -17,7 +17,7 @@
     <!-- Search Form -->
     <div class="row justify-content-center">
       <div class="col-lg-8">
-        <form method="get" action="{% url 'events:event_list' %}" class="d-flex gap-2 bg-white p-2 rounded-pill shadow-lg">
+        <form method="get" action="{% url 'events:event_list' %}#filter-section" class="d-flex gap-2 bg-white p-2 rounded-pill shadow-lg">
           <div class="input-group border-0">
             <span class="input-group-text bg-transparent border-0 text-muted ps-3">
               <i class="bi bi-search fs-5"></i>
@@ -38,16 +38,16 @@
 </section>
 
 <!-- Filter Section -->
-<div class="container mb-4">
-  <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
-    <form method="get" action="{% url 'events:event_list' %}">
+<div class="container mb-4 position-relative" id="filter-section" style="z-index: 50;">
+  <div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 bg-white position-relative filter-card" style="z-index: 50;">
+    <form method="get" action="{% url 'events:event_list' %}#filter-section" id="filterForm" autocomplete="off">
       {% if search_query %}<input type="hidden" name="q" value="{{ search_query }}">{% endif %}
 
-      <div class="row g-3 align-items-center">
+      <div class="row g-3">
         <!-- Category Filter -->
-        <div class="col-md-3 col-sm-6">
-          <label class="form-label small text-muted mb-1"><i class="bi bi-tag me-1"></i>Category</label>
-          <select name="category" class="form-select form-select-sm rounded-pill" onchange="this.form.submit()">
+        <div class="col-lg-3 col-md-6 col-12">
+          <label for="filter-category" class="form-label small fw-semibold text-muted mb-1"><i class="bi bi-tag me-1 text-primary"></i>Category</label>
+          <select id="filter-category" name="category" class="form-select rounded-pill shadow-none">
             <option value="">All Categories</option>
             {% for cat in categories %}
               <option value="{{ cat.slug }}" {% if selected_category == cat.slug %}selected{% endif %}>{{ cat.name }}</option>
@@ -56,33 +56,33 @@
         </div>
 
         <!-- City Filter -->
-        <div class="col-md-3 col-sm-6">
-          <label class="form-label small text-muted mb-1"><i class="bi bi-geo-alt me-1"></i>City</label>
-          <select name="city" class="form-select form-select-sm rounded-pill" onchange="this.form.submit()">
+        <div class="col-lg-3 col-md-6 col-12">
+          <label for="filter-city" class="form-label small fw-semibold text-muted mb-1"><i class="bi bi-geo-alt me-1 text-primary"></i>City</label>
+          <select id="filter-city" name="city" class="form-select rounded-pill shadow-none">
             <option value="">All Cities</option>
             {% for city_name in available_cities %}
-              <option value="{{ city_name }}" {% if selected_city == city_name %}selected{% endif %}>{{ city_name }}</option>
+              <option value="{{ city_name }}" {% if selected_city|lower == city_name|lower %}selected{% endif %}>{{ city_name }}</option>
             {% endfor %}
           </select>
         </div>
 
         <!-- Date Range Filter -->
-        <div class="col-md-3 col-sm-6">
-          <label class="form-label small text-muted mb-1"><i class="bi bi-calendar3 me-1"></i>When</label>
-          <select name="date_range" class="form-select form-select-sm rounded-pill" onchange="this.form.submit()">
+        <div class="col-lg-3 col-md-6 col-12">
+          <label for="filter-date-range" class="form-label small fw-semibold text-muted mb-1"><i class="bi bi-calendar3 me-1 text-primary"></i>When</label>
+          <select id="filter-date-range" name="date_range" class="form-select rounded-pill shadow-none">
             <option value="" {% if not selected_date_range %}selected{% endif %}>Any Upcoming Date</option>
             <option value="today" {% if selected_date_range == 'today' %}selected{% endif %}>Today</option>
             <option value="tomorrow" {% if selected_date_range == 'tomorrow' %}selected{% endif %}>Tomorrow</option>
             <option value="this_weekend" {% if selected_date_range == 'this_weekend' %}selected{% endif %}>This Weekend</option>
             <option value="this_week" {% if selected_date_range == 'this_week' %}selected{% endif %}>Next 7 Days</option>
-            <option value="this_month" {% if selected_date_range == 'this_month' %}selected{% endif %}>This Month</option>
+            <option value="this_month" {% if selected_date_range == 'this_month' %}selected{% endif %}>Next 30 Days</option>
           </select>
         </div>
 
         <!-- Pricing Filter -->
-        <div class="col-md-3 col-sm-6">
-          <label class="form-label small text-muted mb-1"><i class="bi bi-ticket-perforated me-1"></i>Pricing</label>
-          <select name="pricing" class="form-select form-select-sm rounded-pill" onchange="this.form.submit()">
+        <div class="col-lg-3 col-md-6 col-12">
+          <label for="filter-pricing" class="form-label small fw-semibold text-muted mb-1"><i class="bi bi-ticket-perforated me-1 text-primary"></i>Pricing</label>
+          <select id="filter-pricing" name="pricing" class="form-select rounded-pill shadow-none">
             <option value="" {% if not selected_pricing %}selected{% endif %}>All Events (Free & Paid)</option>
             <option value="free" {% if selected_pricing == 'free' %}selected{% endif %}>Free Only</option>
             <option value="paid" {% if selected_pricing == 'paid' %}selected{% endif %}>Paid Only</option>
@@ -90,17 +90,40 @@
         </div>
       </div>
 
-      <!-- Reset Filter Link -->
-      {% if has_filters %}
-        <div class="d-flex align-items-center justify-content-between mt-3 pt-2 border-top">
-          <div class="small text-muted">
-            Filtered results: <strong>{{ total_events_count }}</strong> approved event{{ total_events_count|pluralize }} found.
-          </div>
-          <a href="{% url 'events:event_list' %}" class="btn btn-outline-danger btn-sm rounded-pill px-3">
-            <i class="bi bi-x-circle me-1"></i> Reset Filters
-          </a>
+      <!-- Action Bar -->
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3 pt-3 border-top">
+        <div class="d-flex align-items-center flex-wrap gap-2">
+          <button type="submit" class="btn btn-primary rounded-pill px-4 fw-semibold shadow-sm py-2">
+            <i class="bi bi-funnel me-1"></i> Apply Filters
+          </button>
+          {% if has_filters %}
+            <a href="{% url 'events:event_list' %}#filter-section" class="btn btn-outline-danger rounded-pill px-3 py-2 shadow-sm">
+              <i class="bi bi-arrow-counterclockwise me-1"></i> Reset Filters
+            </a>
+          {% endif %}
         </div>
-      {% endif %}
+
+        {% if has_filters %}
+          <div class="small text-muted d-flex align-items-center flex-wrap gap-2">
+            <span><strong>{{ total_events_count }}</strong> event{{ total_events_count|pluralize }} found:</span>
+            {% if selected_category %}
+              <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill">Category: {{ selected_category }}</span>
+            {% endif %}
+            {% if selected_city %}
+              <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle rounded-pill">City: {{ selected_city }}</span>
+            {% endif %}
+            {% if selected_date_range %}
+              <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle rounded-pill">When: {{ selected_date_range }}</span>
+            {% endif %}
+            {% if selected_pricing %}
+              <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle rounded-pill">Pricing: {{ selected_pricing|title }}</span>
+            {% endif %}
+            {% if search_query %}
+              <span class="badge bg-dark-subtle text-dark-emphasis border border-secondary-subtle rounded-pill">Search: "{{ search_query }}"</span>
+            {% endif %}
+          </div>
+        {% endif %}
+      </div>
     </form>
   </div>
 </div>
@@ -111,30 +134,32 @@
     <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
       {% for event in events %}
         <div class="col">
-          <div class="event-card">
+          <div class="event-card position-relative">
             <!-- Event Card Image / Poster -->
-            <div class="event-card-img-wrapper position-relative">
-              {% if event.poster %}
-                <img src="{{ event.poster.url }}" alt="{{ event.title }}">
-              {% else %}
-                <div class="d-flex align-items-center justify-content-center h-100 bg-gradient text-white" style="background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%);">
-                  <div class="text-center p-3">
-                    <i class="bi bi-calendar-event fs-1 opacity-75"></i>
-                    <div class="fw-bold mt-1 text-white">{{ event.category.name }}</div>
+            <a href="{{ event.get_absolute_url }}" class="d-block text-decoration-none">
+              <div class="event-card-img-wrapper position-relative">
+                {% if event.poster %}
+                  <img src="{{ event.poster.url }}" alt="{{ event.title }}">
+                {% else %}
+                  <div class="d-flex align-items-center justify-content-center h-100 bg-gradient text-white" style="background: linear-gradient(135deg, #4f46e5 0%, #06b6d4 100%);">
+                    <div class="text-center p-3">
+                      <i class="bi bi-calendar-event fs-1 opacity-75"></i>
+                      <div class="fw-bold mt-1 text-white">{{ event.category.name }}</div>
+                    </div>
                   </div>
-                </div>
-              {% endif %}
+                {% endif %}
 
-              <!-- Category Badge overlay -->
-              <span class="badge bg-white text-dark shadow-sm position-absolute top-0 start-0 m-3 px-3 py-1 rounded-pill fw-semibold small">
-                {{ event.category.name }}
-              </span>
+                <!-- Category Badge overlay -->
+                <span class="badge bg-white text-dark shadow-sm position-absolute top-0 start-0 m-3 px-3 py-1 rounded-pill fw-semibold small">
+                  {{ event.category.name }}
+                </span>
 
-              <!-- Pricing Badge overlay -->
-              <span class="badge {% if event.is_free %}bg-success text-white{% else %}bg-dark text-white{% endif %} position-absolute top-0 end-0 m-3 px-3 py-1 rounded-pill fw-semibold small">
-                {% if event.is_free %}Free{% else %}₹{{ event.price }}{% endif %}
-              </span>
-            </div>
+                <!-- Pricing Badge overlay -->
+                <span class="badge {% if event.is_free %}bg-success text-white{% else %}bg-dark text-white{% endif %} position-absolute top-0 end-0 m-3 px-3 py-1 rounded-pill fw-semibold small">
+                  {% if event.is_free %}Free{% else %}₹{{ event.price }}{% endif %}
+                </span>
+              </div>
+            </a>
 
             <!-- Card Body -->
             <div class="event-card-body">
@@ -156,7 +181,7 @@
               </div>
 
               <h5 class="fw-bold mb-2">
-                <a href="{{ event.get_absolute_url }}" class="text-decoration-none text-dark stretched-link">
+                <a href="{{ event.get_absolute_url }}" class="text-decoration-none text-dark card-title-link">
                   {{ event.title }}
                 </a>
               </h5>
@@ -171,9 +196,9 @@
                     <i class="bi bi-geo-alt-fill text-danger me-1"></i>
                     <strong>{{ event.area }}</strong>, {{ event.city }}
                   </div>
-                  <div class="text-truncate text-muted">
-                    <i class="bi bi-person me-1"></i>{{ event.organizer_display_name }}
-                  </div>
+                  <a href="{{ event.get_absolute_url }}" class="btn btn-sm btn-outline-primary rounded-pill px-3 py-1 fw-semibold text-nowrap">
+                    View <i class="bi bi-arrow-right ms-1"></i>
+                  </a>
                 </div>
               </div>
             </div>
