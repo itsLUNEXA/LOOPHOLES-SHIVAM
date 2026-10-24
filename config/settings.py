@@ -131,3 +131,15 @@ MESSAGE_TAGS = {
     messages.WARNING: 'warning',
     messages.ERROR: 'danger',
 }
+
+# TinyFish Web Agent Configuration (Part 2 Milestone 1)
+TINYFISH_API_KEY = os.getenv('TINYFISH_API_KEY', '').strip()
+TINYFISH_ALLOWED_SOURCE_URL = os.getenv('TINYFISH_ALLOWED_SOURCE_URL', '').strip()
+TINYFISH_ALLOWED_SOURCES = [
+    url.strip()
+    for url in os.getenv('TINYFISH_ALLOWED_SOURCES', TINYFISH_ALLOWED_SOURCE_URL).split(',')
+    if url.strip()
+]
+if TINYFISH_ALLOWED_SOURCE_URL and TINYFISH_ALLOWED_SOURCE_URL not in TINYFISH_ALLOWED_SOURCES:
+    TINYFISH_ALLOWED_SOURCES.insert(0, TINYFISH_ALLOWED_SOURCE_URL)
+

@@ -7,6 +7,12 @@ from django.utils.html import format_html
 from django.urls import reverse
 from django import forms
 from .models import Category, Event, WhatsAppSubmission
+from .tinyfish import (
+    get_tinyfish_config,
+    fetch_events_from_tinyfish,
+    check_tinyfish_run_result,
+    validate_and_import_events,
+)
 
 
 def apply_event_moderation(queryset, reviewer, action_type, feedback=''):
@@ -150,6 +156,8 @@ class EventAdmin(admin.ModelAdmin):
         'slug',
         'submitted_by',
         'source_type',
+        'original_source_url',
+        'source_checked_at',
         'created_at',
         'updated_at',
         'reviewed_by',
@@ -207,11 +215,199 @@ class EventAdmin(admin.ModelAdmin):
                 'registration_deadline',
                 'source_type',
                 'original_source_url',
+                'source_checked_at',
                 'created_at',
                 'updated_at',
             ]
         }),
     ]
+
+    def get_urls(self):
+        from django.urls import path
+        urls = super().get_urls()
+        custom_urls = [
+            path('sync/', self.admin_site.admin_view(self.sync_events_view), name='events_event_sync'),
+        ]
+        return custom_urls + urls
+
+    def sync_events_view(self, request):
+        """
+        Admin view to synchronize events from configured external website via TinyFish.
+        Enforces server-side permissions and CSRF protection.
+        """
+        if not (request.user.is_authenticated and request.user.is_staff and request.user.has_perm('events.add_event')):
+            raise PermissionDenied("You do not have permission to sync events.")
+
+        config = get_tinyfish_config()
+        active_run_id = request.session.get('tinyfish_active_run_id')
+        summary = None
+
+        if request.method == 'POST':
+            action = request.POST.get('action', 'sync_now')
+
+            if action == 'clear_run':
+                request.session.pop('tinyfish_active_run_id', None)
+                active_run_id = None
+                messages.info(request, "Active Run ID cleared from session.")
+            elif action == 'check_run':
+                run_id = (request.POST.get('run_id') or active_run_id or '').strip()
+                if not run_id:
+                    messages.error(request, "No run identifier provided to check.")
+                else:
+                    run_res = check_tinyfish_run_result(run_id)
+                    if run_res['success'] and run_res.get('status') == 'COMPLETED':
+                        summary = validate_and_import_events(run_res['events'], config['allowed_source_url'], request.user)
+                        summary['run_id'] = run_id
+                        request.session['last_tinyfish_sync_summary'] = summary
+                        request.session.pop('tinyfish_active_run_id', None)
+                        active_run_id = None
+                        messages.success(
+                            request,
+                            f"Run {run_id} completed: imported {summary['new_pending_created']} new pending event(s)."
+                        )
+                    elif run_res.get('status') in ('PENDING', 'RUNNING'):
+                        request.session['tinyfish_active_run_id'] = run_id
+                        active_run_id = run_id
+                        messages.info(request, f"Run {run_id} is currently {run_res['status']}. Please check again shortly.")
+                        summary = {
+                            'source_checked': config['allowed_source_url'],
+                            'run_outcome': run_res['status'],
+                            'run_id': run_id,
+                            'records_returned': 0,
+                            'new_pending_created': 0,
+                            'duplicates_skipped': 0,
+                            'changes_detected': 0,
+                            'invalid_records_skipped': 0,
+                        }
+                    elif run_res.get('status') == 'POLL_TIMEOUT':
+                        request.session['tinyfish_active_run_id'] = run_id
+                        active_run_id = run_id
+                        messages.warning(
+                            request,
+                            f"Network timeout while checking run {run_id}. The remote run is preserved and still active. Click 'Check Status' again to re-check."
+                        )
+                        summary = {
+                            'source_checked': config['allowed_source_url'],
+                            'run_outcome': 'POLL_TIMEOUT',
+                            'run_id': run_id,
+                            'records_returned': 0,
+                            'new_pending_created': 0,
+                            'duplicates_skipped': 0,
+                            'changes_detected': 0,
+                            'invalid_records_skipped': 0,
+                        }
+                    else:
+                        messages.error(request, f"Run {run_id} check failed: {run_res.get('error') or run_res.get('status')}")
+                        summary = {
+                            'source_checked': config['allowed_source_url'],
+                            'run_outcome': run_res.get('status') or 'FAILED',
+                            'run_id': run_id,
+                            'records_returned': 0,
+                            'new_pending_created': 0,
+                            'duplicates_skipped': 0,
+                            'changes_detected': 0,
+                            'invalid_records_skipped': 0,
+                        }
+            else:
+                # 'sync_now' action
+                if not config['is_configured']:
+                    err_msg = "Cannot start sync: " + " ; ".join(config['missing_reasons'])
+                    messages.error(request, err_msg)
+                    summary = {
+                        'source_checked': config['allowed_source_url'] or 'Not configured',
+                        'run_outcome': 'CONFIGURATION_ERROR',
+                        'run_id': None,
+                        'records_returned': 0,
+                        'new_pending_created': 0,
+                        'duplicates_skipped': 0,
+                        'changes_detected': 0,
+                        'invalid_records_skipped': 0,
+                    }
+                else:
+                    target_url = request.POST.get('source_url', '').strip() or config['allowed_source_url']
+                    fetch_res = fetch_events_from_tinyfish(target_url, sync_mode='async')
+
+                    if fetch_res['success']:
+                        run_id = fetch_res.get('run_id')
+                        if run_id:
+                            request.session['tinyfish_active_run_id'] = run_id
+                            active_run_id = run_id
+
+                        outcome_status = fetch_res.get('status') or 'PENDING'
+                        if outcome_status in ('PENDING', 'RUNNING'):
+                            messages.info(
+                                request,
+                                f"Async automation enqueued with Run ID: {active_run_id}. You can check its result below without launching a new run."
+                            )
+                            summary = {
+                                'source_checked': target_url,
+                                'run_outcome': outcome_status,
+                                'run_id': active_run_id,
+                                'records_returned': 0,
+                                'new_pending_created': 0,
+                                'duplicates_skipped': 0,
+                                'changes_detected': 0,
+                                'invalid_records_skipped': 0,
+                            }
+                        else:
+                            summary = validate_and_import_events(fetch_res['events'], target_url, request.user)
+                            summary['run_id'] = run_id
+                            request.session['last_tinyfish_sync_summary'] = summary
+                            if summary['new_pending_created'] > 0:
+                                messages.success(
+                                    request,
+                                    f"Imported {summary['new_pending_created']} new event draft(s) in pending review from {target_url}."
+                                )
+                            else:
+                                messages.info(
+                                    request,
+                                    f"Sync finished for {target_url}: 0 new events, {summary['duplicates_skipped']} duplicates skipped."
+                                )
+                    else:
+                        if fetch_res.get('status') == 'SUBMISSION_OUTCOME_UNKNOWN':
+                            messages.warning(
+                                request,
+                                "Submission outcome unknown: The initial request to TinyFish timed out before a Run ID was received. "
+                                "The automation run may or may not be executing remotely. Do not start another run immediately; "
+                                "check your TinyFish dashboard or attach the Run ID below."
+                            )
+                            summary = {
+                                'source_checked': target_url,
+                                'run_outcome': 'SUBMISSION_OUTCOME_UNKNOWN',
+                                'run_id': None,
+                                'records_returned': 0,
+                                'new_pending_created': 0,
+                                'duplicates_skipped': 0,
+                                'changes_detected': 0,
+                                'invalid_records_skipped': 0,
+                            }
+                        else:
+                            messages.error(request, f"TinyFish sync failed: {fetch_res['error']}")
+                            summary = {
+                                'source_checked': target_url,
+                                'run_outcome': fetch_res.get('status') or 'FAILED',
+                                'run_id': fetch_res.get('run_id'),
+                                'records_returned': 0,
+                                'new_pending_created': 0,
+                                'duplicates_skipped': 0,
+                                'changes_detected': 0,
+                                'invalid_records_skipped': 0,
+                            }
+                        request.session['last_tinyfish_sync_summary'] = summary
+
+        elif request.method == 'GET':
+            summary = request.session.get('last_tinyfish_sync_summary')
+
+        context = {
+            **self.admin_site.each_context(request),
+            'title': "Sync Events via TinyFish",
+            'config': config,
+            'summary': summary,
+            'active_run_id': active_run_id,
+            'opts': self.model._meta,
+            'media': self.media,
+        }
+        return render(request, 'admin/events/event/sync_events.html', context)
 
     def changeform_view(self, request, object_id=None, form_url='', extra_context=None):
         if request.method == 'POST' and '_moderate_action' in request.POST and object_id:

@@ -128,6 +128,9 @@
   <a href="{% url 'admin:events_category_changelist' %}" class="{% if '/admin/events/category/' in request.path %}active-link{% endif %}" title="Manage event categories">
     <i class="bi bi-tags"></i> Categories
   </a>
+  <a href="{% url 'admin:events_event_sync' %}" class="{% if '/admin/events/event/sync/' in request.path %}active-link{% endif %}" title="Sync events from configured website via TinyFish">
+    <i class="bi bi-arrow-repeat"></i> Sync Events
+  </a>
   <span class="nav-divider">|</span>
   <a href="{% url 'events:event_list' %}" target="_blank" title="Open the public event discovery website">
     <i class="bi bi-box-arrow-up-right"></i> View Website

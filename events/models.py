@@ -67,7 +67,7 @@ class Event(models.Model):
     )
 
     start_datetime = models.DateTimeField(verbose_name="Start Date & Time")
-    end_datetime = models.DateTimeField(verbose_name="End Date & Time")
+    end_datetime = models.DateTimeField(null=True, blank=True, verbose_name="End Date & Time")
 
     city = models.CharField(max_length=100, verbose_name="City")
     area = models.CharField(max_length=120, verbose_name="Area / Locality / Neighborhood")
@@ -81,7 +81,7 @@ class Event(models.Model):
     )
     submitted_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='submitted_events')
 
-    is_free = models.BooleanField(default=True, verbose_name="Free Event?")
+    is_free = models.BooleanField(null=True, blank=True, default=True, verbose_name="Free Event?")
     price = models.DecimalField(
         max_digits=10,
         decimal_places=2,
@@ -117,6 +117,12 @@ class Event(models.Model):
         blank=True,
         verbose_name="Original Source URL",
         help_text="Optional reference link (e.g. social post or meet page)"
+    )
+    source_checked_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Source Checked At",
+        help_text="Timestamp when the external source was checked"
     )
 
     review_status = models.CharField(
@@ -171,9 +177,10 @@ class Event(models.Model):
             if self.registration_deadline > self.start_datetime:
                 errors['registration_deadline'] = "Registration deadline cannot be after the event start time."
 
-        if not self.is_free:
+        if self.is_free is False:
             if self.price is None:
-                errors['price'] = "Price is required for paid events."
+                if self.source_type != 'external':
+                    errors['price'] = "Price is required for paid events."
             elif self.price < 0:
                 errors['price'] = "Price cannot be negative."
 
