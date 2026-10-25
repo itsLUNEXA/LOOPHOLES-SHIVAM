@@ -137,6 +137,7 @@ class AdminLoginAndDashboardAcceptanceTests(TestCase):
         self.login_url = reverse('accounts:login')
         self.logout_url = reverse('accounts:logout')
         self.events_url = reverse('events:event_list')
+        self.landing_url = reverse('events:landing')
         self.admin_url = reverse('admin:index')
 
         # Normal User
@@ -367,7 +368,7 @@ class AdminLoginAndDashboardAcceptanceTests(TestCase):
             self.assertContains(r, "Logout")
 
     def test_acceptance_8_logout_works_and_protects_admin(self):
-        """8. Logout works via POST and protected pages require authentication afterward."""
+        """8. Logout works via POST, redirects to landing page, and protected pages require authentication afterward."""
         self.client.force_login(self.admin_user)
         r_dash = self.client.get(self.admin_url)
         self.assertEqual(r_dash.status_code, 200)
@@ -375,10 +376,78 @@ class AdminLoginAndDashboardAcceptanceTests(TestCase):
         # Execute POST logout
         logout_resp = self.client.post(self.logout_url)
         self.assertEqual(logout_resp.status_code, 302)
-        self.assertEqual(logout_resp.url, self.events_url)
+        self.assertEqual(logout_resp.url, self.landing_url)
 
         # After logout, accessing admin redirects to login page with type=admin
         r_protected = self.client.get(self.admin_url, follow=True)
         self.assertEqual(r_protected.status_code, 200)
         self.assertContains(r_protected, "Admin Login")
         self.assertContains(r_protected, "Sign in with your staff account")
+
+    def test_logout_redirects_to_landing_and_shows_logged_out_navbar(self):
+        """User logout terminates auth session, opens /, displays logged-out navbar, and protects dashboard."""
+        self.client.force_login(self.normal_user)
+
+        # Confirm user can access dashboard before logout
+        dash_resp = self.client.get(reverse('events:user_dashboard'))
+        self.assertEqual(dash_resp.status_code, 200)
+
+        # Execute secure POST logout
+        logout_resp = self.client.post(self.logout_url)
+        self.assertEqual(logout_resp.status_code, 302)
+        self.assertEqual(logout_resp.url, self.landing_url)
+
+        # Follow redirect to intro landing page
+        landing_resp = self.client.get(logout_resp.url)
+        self.assertEqual(landing_resp.status_code, 200)
+
+        # Verify logged-out navbar is rendered
+        self.assertContains(landing_resp, "Log In")
+        self.assertContains(landing_resp, "Sign Up")
+        self.assertNotContains(landing_resp, "Log Out")
+
+        # Verify intro page contains clean overview and NO event cards or personal dashboard widgets
+        self.assertContains(landing_resp, "Discover Local Events, Hackathons & Competitions")
+        self.assertContains(landing_resp, "What Vibento Does")
+        self.assertNotContains(landing_resp, "My Enrolled Events")
+        self.assertNotContains(landing_resp, "Upcoming Events")
+        self.assertNotContains(landing_resp, "Nearest Deadline")
+        self.assertNotContains(landing_resp, "event-card")
+
+        # Verify protected dashboard pages require login after logout
+        user_dash_resp = self.client.get(reverse('events:user_dashboard'))
+        self.assertEqual(user_dash_resp.status_code, 302)
+        self.assertIn(reverse('accounts:login'), user_dash_resp.url)
+
+        org_dash_resp = self.client.get(reverse('events:organizer_dashboard'))
+        self.assertEqual(org_dash_resp.status_code, 302)
+        self.assertIn(reverse('accounts:login'), org_dash_resp.url)
+
+    def test_login_success_behavior_remains_unchanged(self):
+        """Login success behavior is preserved and redirects to discovery /events/ or specified next parameter."""
+        # Default login redirect
+        login_resp = self.client.post(self.login_url, {
+            'email': 'user@community.test',
+            'password': 'UserPass123!',
+        })
+        self.assertEqual(login_resp.status_code, 302)
+        self.assertEqual(login_resp.url, self.events_url)
+
+        self.client.logout()
+
+        # Login with next parameter
+        login_with_next = self.client.post(f"{self.login_url}?next={reverse('events:user_dashboard')}", {
+            'email': 'user@community.test',
+            'password': 'UserPass123!',
+        })
+        self.assertEqual(login_with_next.status_code, 302)
+        self.assertEqual(login_with_next.url, reverse('events:user_dashboard'))
+
+    def test_prototype_badge_absent_from_discovery_page(self):
+        """Prototype badge ('Part 1 Working Prototype') is completely removed from discovery UI."""
+        resp = self.client.get(self.events_url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotContains(resp, "Part 1 Working Prototype")
+        self.assertNotContains(resp, "Working Prototype")
+        self.assertContains(resp, "Vibento")
+        self.assertContains(resp, "Discover nearby events. Connect with your community.")

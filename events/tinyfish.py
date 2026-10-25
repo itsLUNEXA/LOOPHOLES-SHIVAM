@@ -110,6 +110,61 @@ def normalize_url(url: str) -> str:
     return clean
 
 
+def extract_events_from_tinyfish_response(data: dict) -> list:
+    """
+    Extracts events list from TinyFish response dictionary, supporting:
+    - Dict with 'events' key
+    - Dict with 'result' containing dict with 'events'
+    - JSON-encoded string in 'result' (with or without markdown code fences ```json ... ```)
+    - Direct list in 'result' or 'events'
+    - Nested dict in 'result' -> 'data' -> 'events' or 'output' -> 'events'
+    """
+    if not isinstance(data, dict):
+        return []
+
+    # Check top-level 'events'
+    if isinstance(data.get('events'), list):
+        return data['events']
+
+    result_data = data.get('result')
+    if result_data is None:
+        return []
+
+    # If result_data is a JSON string or markdown-wrapped JSON string
+    if isinstance(result_data, str):
+        cleaned = result_data.strip()
+        if cleaned.startswith('```'):
+            import re
+            match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', cleaned)
+            if match:
+                cleaned = match.group(1).strip()
+        try:
+            parsed = json.loads(cleaned)
+            result_data = parsed
+        except Exception as e:
+            logger.warning(f"Could not parse result string as JSON: {e}")
+            return []
+
+    # If result is directly a list
+    if isinstance(result_data, list):
+        return result_data
+
+    # If result is a dict
+    if isinstance(result_data, dict):
+        if isinstance(result_data.get('events'), list):
+            return result_data['events']
+        if isinstance(result_data.get('data'), dict) and isinstance(result_data['data'].get('events'), list):
+            return result_data['data']['events']
+        if isinstance(result_data.get('output'), dict) and isinstance(result_data['output'].get('events'), list):
+            return result_data['output']['events']
+        # If dict contains a list of events under another key
+        for val in result_data.values():
+            if isinstance(val, list) and len(val) > 0 and isinstance(val[0], dict) and 'title' in val[0]:
+                return val
+
+    return []
+
+
 def fetch_events_from_tinyfish(source_url: str, sync_mode: str = 'async', content_type: str = 'events'):
     """
     Calls official TinyFish Agent API to extract structured events.
@@ -236,12 +291,7 @@ def fetch_events_from_tinyfish(source_url: str, sync_mode: str = 'async', conten
                     'error': None,
                 }
 
-            result_data = data.get('result') or {}
-            events_list = []
-            if isinstance(result_data, dict):
-                events_list = result_data.get('events', [])
-            elif isinstance(result_data, list):
-                events_list = result_data
+            events_list = extract_events_from_tinyfish_response(data)
 
             return {
                 'success': True,
@@ -352,8 +402,7 @@ def check_tinyfish_run_result(run_id: str):
             data = json.loads(response.read().decode('utf-8'))
             status = data.get('status', 'PENDING')
             if status == 'COMPLETED':
-                result_data = data.get('result') or {}
-                events_list = result_data.get('events', []) if isinstance(result_data, dict) else []
+                events_list = extract_events_from_tinyfish_response(data)
                 return {
                     'success': True,
                     'events': events_list,
@@ -445,19 +494,20 @@ def parse_and_validate_datetime(dt_str: str):
     return None
 
 
-def match_category(category_hint: str = None, category_mappings: dict = None, default_category = None):
+def match_category(category_hint: str = None, category_mappings: dict = None, default_category = None, title: str = "", description: str = ""):
     """
-    Matches category hint against:
+    Matches category against:
     1. Explicit keyword/tag category mappings dict
-    2. Direct name or slug match
-    3. Substring match against existing categories
+    2. Direct name or slug match on category_hint
+    3. Content analysis across category_hint, title, and description (domain keywords)
     4. Default category configured on source
-    5. First existing category in DB
+    5. Fallback to general category ('community-social' or general fallback)
     """
-    if category_hint and category_mappings and isinstance(category_mappings, dict):
-        hint_clean = str(category_hint).strip().lower()
+    combined_text = f"{category_hint or ''} {title or ''} {description or ''}".lower()
+
+    if category_mappings and isinstance(category_mappings, dict):
         for kw, target_slug in category_mappings.items():
-            if kw.lower() in hint_clean:
+            if kw.lower() in combined_text:
                 cat = Category.objects.filter(slug__iexact=target_slug).first() or Category.objects.filter(name__iexact=target_slug).first()
                 if cat:
                     return cat
@@ -474,13 +524,89 @@ def match_category(category_hint: str = None, category_mappings: dict = None, de
             if existing.name.lower() in hint_clean or hint_clean in existing.name.lower():
                 return existing
 
+    # Content-based classification using actual event text
+    # 1. Tech & AI
+    tech_keywords = [
+        'hackathon', 'software', 'coding', 'developer', 'dsa', 'dbms',
+        'programming', 'algorithm', 'web dev', 'cybersecurity', 'robotics',
+        'machine learning', 'artificial intelligence', 'data science',
+        'competitive coding', 'full stack', 'cloud computing'
+    ]
+    if any(kw in combined_text for kw in tech_keywords):
+        cat = Category.objects.filter(slug__in=['technology-ai', 'tech-ai', 'technology', 'tech']).first()
+        if cat:
+            return cat
+
+    # 2. Startups & Business (economics, finance, portfolios, case competitions)
+    business_keywords = [
+        'startup', 'business', 'entrepreneur', 'finance', 'economic', 'economics',
+        'portfolio', 'macroeconomic', 'venture', 'case competition', 'case study',
+        'strategy & planning', 'strategy', 'fintech', 'marketing', 'pitch'
+    ]
+    # Check if title explicitly indicates business/economics/finance
+    if any(kw in title.lower() for kw in business_keywords):
+        cat = Category.objects.filter(slug__in=['startups-business', 'startups', 'business']).first()
+        if cat:
+            return cat
+
+    # 3. Community games / treasure hunt / escape room / quizzes in title and hint
+    community_keywords = [
+        'treasure hunt', 'escape room', 'quiz', 'quizzes', 'trivia', 'board game',
+        'gathering', 'meetup', 'volunteer', 'community & social'
+    ]
+    if any(kw in f"{category_hint or ''} {title}".lower() for kw in community_keywords):
+        cat = Category.objects.filter(slug__in=['community-social', 'community']).first()
+        if cat:
+            return cat
+
+    # Check remaining business keywords in description
+    if any(kw in combined_text for kw in business_keywords):
+        cat = Category.objects.filter(slug__in=['startups-business', 'startups', 'business']).first()
+        if cat:
+            return cat
+
+    # 3. Arts & Crafts
+    arts_keywords = ['pottery', 'painting', 'drawing', 'sculpture', 'sketching', 'craft', 'visual arts', 'design workshop']
+    if any(kw in combined_text for kw in arts_keywords):
+        cat = Category.objects.filter(slug__in=['arts-crafts', 'arts']).first()
+        if cat:
+            return cat
+
+    # 4. Music & Live Jam
+    music_keywords = ['music', 'live jam', 'acoustic', 'concert', 'band', 'singing', 'orchestra', 'jam session']
+    if any(kw in combined_text for kw in music_keywords):
+        cat = Category.objects.filter(slug__in=['music-live-jam', 'music']).first()
+        if cat:
+            return cat
+
+    # 5. Books & Literature
+    books_keywords = ['book', 'literature', 'poetry', 'reading', 'writer', 'writing', 'author']
+    if any(kw in combined_text for kw in books_keywords):
+        cat = Category.objects.filter(slug__in=['books-literature', 'books']).first()
+        if cat:
+            return cat
+
+    # 6. Community & Social (quizzes, treasure hunts, social gatherings, general competitions)
+    community_keywords = [
+        'treasure hunt', 'escape room', 'quiz', 'quizzes', 'trivia', 'board game',
+        'social-deduction', 'gathering', 'meetup', 'volunteer', 'community & social'
+    ]
+    if any(kw in combined_text for kw in community_keywords):
+        cat = Category.objects.filter(slug__in=['community-social', 'community']).first()
+        if cat:
+            return cat
+
     if default_category:
         return default_category
 
-    # Fallback to first existing category or create a 'Community' category
+    # Fallback to general category ('community-social' / 'community') or first existing category
+    general_cat = Category.objects.filter(slug__in=['community-social', 'community']).first()
+    if general_cat:
+        return general_cat
+
     fallback = Category.objects.first()
     if not fallback:
-        fallback = Category.objects.create(name='Community', slug='community', badge_color='primary')
+        fallback = Category.objects.create(name='Community & Social', slug='community-social', badge_color='primary')
     return fallback
 
 
@@ -491,16 +617,20 @@ def validate_and_import_events(raw_events, source_url: str, user: User, source=N
     
     Returns structured results summary.
     """
+    from urllib.parse import urljoin, urlparse
     now = timezone.now()
     summary = {
         'source_checked': source_url,
         'run_outcome': 'COMPLETED',
         'records_returned': len(raw_events) if isinstance(raw_events, list) else 0,
+        'new_approved_created': 0,
         'new_pending_created': 0,
         'duplicates_skipped': 0,
         'changes_detected': 0,
         'invalid_records_skipped': 0,
         'created_events': [],
+        'published_events': [],
+        'exceptions_queued': [],
         'skipped_duplicates': [],
         'detected_changes': [],
         'invalid_records': [],
@@ -510,6 +640,12 @@ def validate_and_import_events(raw_events, source_url: str, user: User, source=N
         summary['run_outcome'] = 'MALFORMED_DATA'
         summary['invalid_records'].append({'title': 'Unknown', 'reason': 'Extracted events payload was not a list.'})
         return summary
+
+    # Source hostname for strict hostname-based trust validation
+    source_parsed = urlparse(source_url)
+    source_hostname = (source_parsed.hostname or '').lower()
+    if source_hostname.startswith('www.'):
+        source_hostname = source_hostname[4:]
 
     for item in raw_events:
         if not isinstance(item, dict):
@@ -563,47 +699,72 @@ def validate_and_import_events(raw_events, source_url: str, user: User, source=N
             })
             continue
 
-        # 3. Location fields
+        # 3. Location fields - online events do not require physical venue/city; missing values remain unknown
         venue_name = str(item.get('venue') or '').strip()[:180]
         city = str(item.get('city') or '').strip()[:100]
         area = str(item.get('area') or '').strip()[:120]
         address = str(item.get('address') or '').strip()
 
+        is_online = any(kw in (venue_name + ' ' + city + ' ' + title + ' ' + str(item.get('description') or '')).lower()
+                        for kw in ('online', 'virtual', 'hackathon', 'competition', 'challenge'))
+
         if not venue_name and not city:
-            summary['invalid_records_skipped'] += 1
-            summary['invalid_records'].append({
-                'title': title,
-                'reason': "Missing venue name and city location details."
-            })
-            continue
+            if is_online:
+                venue_name = "Online"
+                city = "Online"
+                area = "Virtual"
+            else:
+                summary['invalid_records_skipped'] += 1
+                summary['invalid_records'].append({
+                    'title': title,
+                    'reason': "Missing venue name and city location details for in-person event."
+                })
+                continue
+        elif not city:
+            city = "Online" if is_online else ""  # Do NOT invent arbitrary cities
+        elif not venue_name:
+            venue_name = f"Venue in {city}" if city else "Location Announced by Organizer"
 
-        if not venue_name:
-            venue_name = f"Venue in {city}"
-        if not city:
-            city = "Bengaluru"  # Default reasonable regional city if venue is provided
         if not area:
-            area = venue_name[:120]
+            area = city or venue_name[:120] or "Virtual"
 
-        # 4. URLs & Schemes
+        # 4. URLs & Schemes & Parsed Hostname Validation
         raw_page_url = str(item.get('original_event_page_url') or source_url).strip()
         if raw_page_url and not (raw_page_url.startswith('http://') or raw_page_url.startswith('https://')):
-            summary['invalid_records_skipped'] += 1
-            summary['invalid_records'].append({
-                'title': title,
-                'reason': f"Invalid original event page URL scheme: '{raw_page_url}'"
-            })
-            continue
+            if raw_page_url.startswith('/'):
+                raw_page_url = urljoin(source_url, raw_page_url)
+            else:
+                summary['invalid_records_skipped'] += 1
+                summary['invalid_records'].append({
+                    'title': title,
+                    'reason': f"Invalid original event page URL scheme: '{raw_page_url}'"
+                })
+                continue
         original_source_url = raw_page_url[:200]
 
         registration_url = str(item.get('registration_url') or '').strip()
         if registration_url and not (registration_url.startswith('http://') or registration_url.startswith('https://')):
-            summary['invalid_records_skipped'] += 1
-            summary['invalid_records'].append({
-                'title': title,
-                'reason': f"Invalid registration URL scheme: '{registration_url}'"
-            })
-            continue
+            if registration_url.startswith('/'):
+                registration_url = urljoin(source_url, registration_url)
+            else:
+                summary['invalid_records_skipped'] += 1
+                summary['invalid_records'].append({
+                    'title': title,
+                    'reason': f"Invalid registration URL scheme: '{registration_url}'"
+                })
+                continue
         registration_url = registration_url[:200]
+
+        # Parsed Hostname Trust Verification:
+        event_parsed = urlparse(original_source_url)
+        event_hostname = (event_parsed.hostname or '').lower()
+        if event_hostname.startswith('www.'):
+            event_hostname = event_hostname[4:]
+
+        trusted_host_matched = bool(
+            source_hostname and event_hostname and
+            (event_hostname == source_hostname or event_hostname.endswith('.' + source_hostname))
+        )
 
         # 5. Price & Free/Paid status
         is_free = item.get('is_free')
@@ -630,13 +791,7 @@ def validate_and_import_events(raw_events, source_url: str, user: User, source=N
                 })
                 continue
 
-        # If price is unspecified and is_free is unspecified, do not assume free!
-        # is_free remains None or True/False
-
         # 6. Duplicate & Change Detection
-        # Match by:
-        # A) Normalized original_event_page_url (exact page match)
-        # B) Normalized title + start_datetime + city
         norm_page_url = normalize_url(original_source_url)
         norm_title = title.lower().strip()
 
@@ -652,7 +807,33 @@ def validate_and_import_events(raw_events, source_url: str, user: User, source=N
             ).first()
 
         if existing_match:
-            # Check for possible changes on existing record
+            # Preserve admin moderation decisions: never override rejected or unpublished records
+            if existing_match.review_status in ('rejected', 'correction', 'draft'):
+                summary['duplicates_skipped'] += 1
+                summary['skipped_duplicates'].append({
+                    'title': title,
+                    'reason': f"Existing event #{existing_match.pk} has moderation status '{existing_match.review_status}'. Preserving admin decision."
+                })
+                continue
+
+            # If existing record was pending and is now eligible for trusted auto-publication:
+            if existing_match.review_status == 'pending' and auto_approve and trusted_host_matched:
+                existing_match.review_status = 'approved'
+                existing_match.reviewed_at = now
+                existing_match.reviewed_by = user
+                existing_match.reviewer_feedback = f"Automated publication from trusted source {source.name if source else source_url} (hostname verified: {event_hostname})"
+                existing_match.source_checked_at = now
+                existing_match.save(update_fields=['review_status', 'reviewed_at', 'reviewed_by', 'reviewer_feedback', 'source_checked_at'])
+                summary['new_approved_created'] += 1
+                summary['published_events'].append({
+                    'id': existing_match.pk,
+                    'title': existing_match.title,
+                    'start_datetime': existing_match.start_datetime.strftime('%Y-%m-%d %H:%M'),
+                    'city': existing_match.city,
+                })
+                continue
+
+            # Check for changes on existing record
             diffs = []
             extracted_status = str(item.get('status') or '').lower()
             if extracted_status == 'cancelled' and existing_match.event_status != 'cancelled':
@@ -692,25 +873,41 @@ def validate_and_import_events(raw_events, source_url: str, user: User, source=N
             continue
 
         # 7. Other fields & category
+        organizer_name = str(item.get('organizer_name') or 'Community Organizer').strip()[:150]
+        description = str(item.get('description') or f"Event listing imported from {source_url}").strip()
+
         category = match_category(
             item.get('category_hints'),
             category_mappings=category_mappings,
-            default_category=default_category
+            default_category=default_category,
+            title=title,
+            description=description
         )
         intended_audience = str(item.get('intended_audience') or 'All Audiences').strip()
         valid_audiences = [c[0] for c in Event.INTENDED_AUDIENCE_CHOICES]
         if intended_audience not in valid_audiences:
             intended_audience = 'All Audiences'
 
-        organizer_name = str(item.get('organizer_name') or 'Community Organizer').strip()[:150]
-        description = str(item.get('description') or f"Event listing imported from {source_url}").strip()
-
         event_status = 'cancelled' if str(item.get('status') or '').lower() == 'cancelled' else 'scheduled'
 
-        review_status = 'approved' if auto_approve else 'pending'
-        reviewed_at = now if auto_approve else None
-        reviewed_by = user if auto_approve else None
-        reviewer_feedback = f"Automated import from trusted source {source.name if source else source_url}" if auto_approve else ""
+        # Auto-publish eligible records if source is trusted AND hostname matches; otherwise route to review queue
+        if auto_approve and trusted_host_matched:
+            review_status = 'approved'
+            reviewed_at = now
+            reviewed_by = user
+            reviewer_feedback = f"Automated publication from trusted source {source.name if source else source_url} (hostname verified: {event_hostname})"
+        else:
+            review_status = 'pending'
+            reviewed_at = None
+            reviewed_by = None
+            if auto_approve and not trusted_host_matched:
+                reviewer_feedback = f"Sent to moderation: Event hostname '{event_hostname}' does not match trusted source hostname '{source_hostname}'."
+                summary['exceptions_queued'].append({
+                    'title': title,
+                    'reason': f"Hostname mismatch: '{event_hostname}' vs '{source_hostname}'"
+                })
+            else:
+                reviewer_feedback = ""
 
         # 8. Create new Event
         try:
@@ -740,14 +937,28 @@ def validate_and_import_events(raw_events, source_url: str, user: User, source=N
                 reviewer_feedback=reviewer_feedback,
                 event_status=event_status,
             )
-            summary['new_pending_created'] += 1
-            if auto_approve:
-                summary['new_approved_created'] = summary.get('new_approved_created', 0) + 1
+            if review_status == 'approved':
+                summary['new_approved_created'] += 1
+                summary['published_events'].append({
+                    'id': new_event.pk,
+                    'title': new_event.title,
+                    'start_datetime': new_event.start_datetime.strftime('%Y-%m-%d %H:%M'),
+                    'city': new_event.city,
+                })
+            else:
+                summary['new_pending_created'] += 1
+                summary['exceptions_queued'].append({
+                    'id': new_event.pk,
+                    'title': new_event.title,
+                    'reason': reviewer_feedback or "Awaiting standard moderation review."
+                })
+
             summary['created_events'].append({
                 'id': new_event.pk,
                 'title': new_event.title,
                 'start_datetime': new_event.start_datetime.strftime('%Y-%m-%d %H:%M'),
                 'city': new_event.city,
+                'review_status': new_event.review_status,
             })
         except Exception as save_err:
             summary['invalid_records_skipped'] += 1

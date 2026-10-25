@@ -53,8 +53,8 @@
               <i class="bi bi-whatsapp"></i> WhatsApp Sourced
             </span>
           {% elif event.source_type == 'external' %}
-            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle rounded-pill px-3 py-2" title="Extracted from configured external source (not independently verified)">
-              <i class="bi bi-robot"></i> TinyFish Import (Unverified Source)
+            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle rounded-pill px-3 py-2" title="Source: {{ event.source.name|default:'Unstop' }} (Automated Discovery)">
+              <i class="bi bi-box-arrow-up-right me-1"></i> Source: {{ event.source.name|default:"Unstop" }}
             </span>
           {% endif %}
           {% if event.is_free %}

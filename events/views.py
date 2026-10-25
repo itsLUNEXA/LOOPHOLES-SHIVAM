@@ -41,11 +41,14 @@ def event_list(request):
         sync_outcomes = trigger_visitor_entry_refresh()
 
     now = timezone.now()
+    today = timezone.localdate()
     events = Event.objects.filter(
         review_status='approved',
         event_status='scheduled'
     ).filter(
-        Q(end_datetime__gte=now) | Q(end_datetime__isnull=True, start_datetime__gte=now)
+        Q(end_datetime__gte=now) |
+        Q(end_datetime__isnull=True, start_datetime__gte=now) |
+        Q(end_datetime__isnull=True, start_datetime__date=today)
     ).select_related('category', 'submitted_by', 'source').order_by('start_datetime')
 
     # Query params
@@ -88,17 +91,16 @@ def event_list(request):
         events = events.filter(is_free=False)
 
     # Date range filters
-    today = timezone.localdate()
     if date_range == 'today':
         events = events.filter(
-            start_datetime__date__lte=today,
-            end_datetime__date__gte=today
+            Q(start_datetime__date__lte=today, end_datetime__date__gte=today) |
+            Q(start_datetime__date=today, end_datetime__isnull=True)
         )
     elif date_range == 'tomorrow':
         tomorrow = today + timedelta(days=1)
         events = events.filter(
-            start_datetime__date__lte=tomorrow,
-            end_datetime__date__gte=tomorrow
+            Q(start_datetime__date__lte=tomorrow, end_datetime__date__gte=tomorrow) |
+            Q(start_datetime__date=tomorrow, end_datetime__isnull=True)
         )
     elif date_range == 'this_weekend':
         # Saturday and Sunday
@@ -113,18 +115,18 @@ def event_list(request):
             saturday = today + timedelta(days=(5 - weekday))
             sunday = saturday + timedelta(days=1)
         events = events.filter(
-            start_datetime__date__lte=sunday,
-            end_datetime__date__gte=saturday
+            Q(start_datetime__date__lte=sunday, end_datetime__date__gte=saturday) |
+            Q(start_datetime__date__gte=saturday, start_datetime__date__lte=sunday, end_datetime__isnull=True)
         )
     elif date_range == 'this_week':
         events = events.filter(
-            start_datetime__date__lte=today + timedelta(days=7),
-            end_datetime__date__gte=today
+            Q(start_datetime__date__lte=today + timedelta(days=7), end_datetime__date__gte=today) |
+            Q(start_datetime__date__gte=today, start_datetime__date__lte=today + timedelta(days=7), end_datetime__isnull=True)
         )
     elif date_range == 'this_month':
         events = events.filter(
-            start_datetime__date__lte=today + timedelta(days=30),
-            end_datetime__date__gte=today
+            Q(start_datetime__date__lte=today + timedelta(days=30), end_datetime__date__gte=today) |
+            Q(start_datetime__date__gte=today, start_datetime__date__lte=today + timedelta(days=30), end_datetime__isnull=True)
         )
 
     # Custom date picker filtering

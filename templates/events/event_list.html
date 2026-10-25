@@ -6,9 +6,6 @@
 <!-- Hero Section -->
 <section class="hero-banner">
   <div class="container text-center position-relative" style="z-index: 2;">
-    <span class="badge bg-primary-subtle text-primary-emphasis px-3 py-2 rounded-pill fw-semibold mb-3 border border-primary-subtle">
-      <i class="bi bi-stars me-1"></i> Part 1 Working Prototype
-    </span>
     <h1 class="display-5 fw-bold mb-3">Vibento</h1>
     <p class="lead text-light text-opacity-75 mx-auto mb-4" style="max-width: 650px;">
       Discover nearby events. Connect with your community. Explore tech meetups, founder breakfasts, pottery workshops, acoustic jams, and neighborhood gatherings.
@@ -140,7 +137,7 @@
 </div>
 
 <!-- Events Grid Section -->
-<div class="container mb-5">
+<div class="container mb-5" id="events-grid-container">
   {% if events %}
     <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
       {% for event in events %}
@@ -185,8 +182,8 @@
                     <i class="bi bi-whatsapp"></i> WhatsApp
                   </span>
                 {% elif event.source_type == 'external' %}
-                  <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle rounded-pill" title="Imported from configured external source (not independently verified)">
-                    <i class="bi bi-robot"></i> TinyFish Import
+                  <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle rounded-pill" title="Source: {{ event.source.name|default:'Unstop' }} (Automated Discovery)">
+                    <i class="bi bi-box-arrow-up-right me-1"></i> Source: {{ event.source.name|default:"Unstop"|truncatechars:18 }}
                   </span>
                 {% else %}
                   <span class="badge badge-organizer-source rounded-pill">
@@ -308,10 +305,51 @@ document.addEventListener('DOMContentLoaded', function() {
       action.innerHTML = '';
     } else if (data.last_status === 'COMPLETED' && data.records_created > 0) {
       container.style.display = 'block';
-      banner.className = 'alert alert-success d-flex align-items-center justify-content-between p-3 rounded-4 shadow-sm';
       spinner.style.display = 'none';
-      message.innerHTML = '<span><strong>' + data.records_created + '</strong> new community listing(s) imported from configured sources!</span>';
-      action.innerHTML = '<button onclick="window.location.reload();" class="btn btn-sm btn-success rounded-pill px-3 fw-semibold">View Updates &rarr;</button>';
+      if (data.records_approved > 0) {
+        if (pollingInterval) clearInterval(pollingInterval);
+        var sourceLabel = (data.active_source_names && data.active_source_names.length > 0) ? data.active_source_names[0] : 'Unstop';
+        banner.className = 'alert alert-success d-flex align-items-center justify-content-between p-3 rounded-4 shadow-sm';
+        message.innerHTML = '<span><i class="bi bi-check-circle-fill text-success me-1"></i><strong>' + data.records_approved + '</strong> new event(s) published from ' + sourceLabel + '! Updating discovery feed...</span>';
+        action.innerHTML = '<span class="badge bg-success-subtle text-success border border-success-subtle px-3 py-2 fw-semibold rounded-pill"><i class="bi bi-arrow-repeat spin-icon me-1"></i>Updating...</span>';
+
+        // Update event grid in-place using AJAX header to prevent re-triggering background sync loop
+        fetch(window.location.href, {
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(function(res) { return res.text(); })
+        .then(function(html) {
+          var parser = new DOMParser();
+          var doc = parser.parseFromString(html, 'text/html');
+          var newGrid = doc.getElementById('events-grid-container');
+          var currentGrid = document.getElementById('events-grid-container');
+          if (newGrid && currentGrid) {
+            currentGrid.innerHTML = newGrid.innerHTML;
+          }
+          banner.className = 'alert alert-success d-flex align-items-center justify-content-between p-3 rounded-4 shadow-sm';
+          message.innerHTML = '<span><i class="bi bi-check-circle-fill text-success me-1"></i><strong>' + data.records_approved + '</strong> new event(s) published from ' + sourceLabel + '! Discovery feed updated.</span>';
+          action.innerHTML = '<span class="badge bg-success text-white px-3 py-2 fw-semibold rounded-pill"><i class="bi bi-check2 me-1"></i>Updated</span>';
+        })
+        .catch(function(err) {
+          console.error('Error refreshing events feed in-place:', err);
+          action.innerHTML = '<button onclick="window.location.reload();" class="btn btn-sm btn-outline-success rounded-pill px-3">Reload &rarr;</button>';
+        });
+      } else {
+        banner.className = 'alert alert-warning d-flex align-items-center justify-content-between p-3 rounded-4 shadow-sm';
+        message.innerHTML = '<span><i class="bi bi-hourglass-split text-warning-emphasis me-1"></i><strong>' + data.records_created + '</strong> listing(s) imported from configured sources and queued for admin moderation.</span>';
+        action.innerHTML = '<span class="badge bg-warning text-dark px-3 py-2 fw-semibold rounded-pill">Awaiting Review</span>';
+      }
+      if (pollingInterval) clearInterval(pollingInterval);
+    } else if (data.last_status === 'COMPLETED' && (!data.records_created || data.records_created === 0)) {
+      container.style.display = 'block';
+      banner.className = 'alert alert-secondary d-flex align-items-center justify-content-between p-3 rounded-4 shadow-sm';
+      spinner.style.display = 'none';
+      if (data.records_extracted > 0) {
+        message.innerHTML = '<span><i class="bi bi-check2-circle text-muted me-1"></i>Checked ' + data.records_extracted + ' listing(s) from configured source. All records are up to date.</span>';
+      } else {
+        message.innerHTML = '<span><i class="bi bi-info-circle text-muted me-1"></i>Source checked: 0 new event listings found at this time.</span>';
+      }
+      action.innerHTML = '';
       if (pollingInterval) clearInterval(pollingInterval);
     } else if (data.last_status === 'RATE_LIMITED') {
       container.style.display = 'block';
@@ -320,7 +358,7 @@ document.addEventListener('DOMContentLoaded', function() {
       message.textContent = data.error_message || 'Daily API refresh limit reached for configured source. Displaying saved events.';
       action.innerHTML = '';
       if (pollingInterval) clearInterval(pollingInterval);
-    } else if (data.last_status === 'FAILED') {
+    } else if (data.last_status === 'FAILED' || data.last_status === 'TIMEOUT') {
       container.style.display = 'block';
       banner.className = 'alert alert-warning d-flex align-items-center justify-content-between p-3 rounded-4 shadow-sm';
       spinner.style.display = 'none';
@@ -328,6 +366,7 @@ document.addEventListener('DOMContentLoaded', function() {
       action.innerHTML = '';
       if (pollingInterval) clearInterval(pollingInterval);
     } else {
+      if (pollingInterval && !data.is_syncing) clearInterval(pollingInterval);
       if (!isSyncing) {
         container.style.display = 'none';
       }

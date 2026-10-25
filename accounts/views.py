@@ -3,6 +3,7 @@ from django.contrib.auth import login, logout, authenticate
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.contrib import messages
+from django.conf import settings
 from .forms import (
     EmailLoginForm,
     SignupStep1EmailForm,
@@ -89,7 +90,10 @@ def login_view(request):
 def logout_view(request):
     logout(request)
     messages.info(request, "You have been logged out.")
-    return redirect('events:event_list')
+    next_target = request.POST.get('next') or request.GET.get('next')
+    if next_target and next_target.startswith('/') and not next_target.startswith('//'):
+        return redirect(next_target)
+    return redirect(getattr(settings, 'LOGOUT_REDIRECT_URL', 'events:landing'))
 
 
 def signup_view(request):

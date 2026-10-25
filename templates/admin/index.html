@@ -427,7 +427,7 @@
             <tr>
               <th>Source Name</th>
               <th>Content Type</th>
-              <th>Target URL</th>
+              <th>Source URL</th>
               <th>Sync Status</th>
               <th>Runs Today</th>
               <th>Auto-Approve</th>
@@ -444,7 +444,7 @@
               </td>
               <td><span style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-weight: 500;">{{ src.get_content_type_display }}</span></td>
               <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                <a href="{{ src.target_url }}" target="_blank" rel="noopener noreferrer" style="color: #4f46e5;">{{ src.target_url }}</a>
+                <a href="{{ src.source_url }}" target="_blank" rel="noopener noreferrer" style="color: #4f46e5;">{{ src.source_url }}</a>
               </td>
               <td>
                 {% if src.is_running %}

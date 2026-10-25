@@ -44,12 +44,59 @@ def get_default_sync_admin():
     return admin
 
 
+def ensure_default_event_sources():
+    """
+    Ensures that configured sources in settings/environment (e.g. Unstop)
+    exist as enabled EventSource records in the database.
+    Does not initiate live runs or bypass moderation.
+    """
+    from .tinyfish import get_tinyfish_config
+    from .models import Category
+    config = get_tinyfish_config()
+    allowed_sources = config.get('allowed_sources', [])
+    created_or_found = []
+
+    for raw_url in allowed_sources:
+        if not raw_url:
+            continue
+        clean_url = raw_url.strip()
+        is_unstop = "unstop.com" in clean_url.lower()
+        source = EventSource.objects.filter(source_url__iexact=clean_url).first()
+        if not source:
+            name = "Unstop Events & Hackathons" if is_unstop else f"External Source ({clean_url})"
+            tech_cat = Category.objects.filter(slug='technology-ai').first()
+            source = EventSource.objects.create(
+                name=name,
+                source_url=clean_url,
+                content_type='all',
+                default_category=tech_cat,
+                category_mappings={
+                    'hackathon': 'technology-ai',
+                    'coding': 'technology-ai',
+                    'competition': 'technology-ai',
+                    'quiz': 'education-learning',
+                    'workshop': 'education-learning',
+                },
+                is_enabled=True,
+                daily_run_limit=10,
+                auto_approve_trusted=is_unstop,  # User-approved publication policy: Unstop auto-publishes
+                freshness_interval_minutes=360,
+            )
+            logger.info(f"Auto-configured EventSource #{source.pk} for {clean_url}")
+        else:
+            if is_unstop and not source.auto_approve_trusted:
+                source.auto_approve_trusted = True
+                source.save(update_fields=['auto_approve_trusted'])
+        created_or_found.append(source)
+    return created_or_found
+
+
 def trigger_visitor_entry_refresh():
     """
     Called upon initial website entry or deliberate page reload.
 
     Behavior:
-    1. Checks enabled EventSource instances.
+    1. Checks enabled EventSource instances (auto-registers from allowlist if empty).
     2. If a source is already running/queued, attaches visitor to active run (deduplication).
     3. If daily API run limit reached, logs RATE_LIMITED and informs truthfully.
     4. Otherwise, atomically acquires the concurrency lock and marks source 'queued'.
@@ -60,6 +107,10 @@ def trigger_visitor_entry_refresh():
     results = []
     now = timezone.now()
     enabled_sources = EventSource.objects.filter(is_enabled=True)
+
+    if not enabled_sources.exists():
+        ensure_default_event_sources()
+        enabled_sources = EventSource.objects.filter(is_enabled=True)
 
     if not enabled_sources.exists():
         return [{'status': 'no_enabled_sources', 'message': 'No enabled event sources configured.'}]
@@ -340,12 +391,19 @@ def get_sync_status_summary():
 
     last_history = SyncRunHistory.objects.order_by('-started_at').first()
 
+    records_created = last_history.records_created_count if last_history else 0
+    records_extracted = last_history.records_extracted_count if last_history else 0
+    auto_approve = getattr(last_history.source, 'auto_approve_trusted', False) if last_history and last_history.source else False
+
     return {
         'is_syncing': is_syncing,
         'active_source_names': [s.name for s in active_sources],
         'last_status': last_history.status if last_history else 'IDLE',
         'last_run_id': last_history.run_id if last_history else None,
         'last_completed_at': last_history.completed_at.isoformat() if last_history and last_history.completed_at else None,
-        'records_created': last_history.records_created_count if last_history else 0,
+        'records_extracted': records_extracted,
+        'records_created': records_created,
+        'records_pending': records_created if not auto_approve else 0,
+        'records_approved': records_created if auto_approve else 0,
         'error_message': last_history.error_message if last_history and last_history.status in ('FAILED', 'RATE_LIMITED') else None,
     }

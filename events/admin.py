@@ -257,15 +257,47 @@ class EventAdmin(admin.ModelAdmin):
                 else:
                     run_res = check_tinyfish_run_result(run_id)
                     if run_res['success'] and run_res.get('status') == 'COMPLETED':
-                        summary = validate_and_import_events(run_res['events'], config['allowed_source_url'], request.user)
+                        source = EventSource.objects.filter(is_enabled=True).first()
+                        summary = validate_and_import_events(
+                            raw_events=run_res['events'],
+                            source_url=config['allowed_source_url'],
+                            user=request.user,
+                            source=source,
+                            auto_approve=source.auto_approve_trusted if source else False,
+                            default_category=source.default_category if source else None,
+                            category_mappings=source.category_mappings if source else None
+                        )
                         summary['run_id'] = run_id
                         request.session['last_tinyfish_sync_summary'] = summary
                         request.session.pop('tinyfish_active_run_id', None)
                         active_run_id = None
-                        messages.success(
-                            request,
-                            f"Run {run_id} completed: imported {summary['new_pending_created']} new pending event(s)."
-                        )
+                        pub_count = summary.get('new_approved_created', 0)
+                        pend_count = summary.get('new_pending_created', 0)
+                        if pub_count > 0 and pend_count > 0:
+                            messages.success(
+                                request,
+                                f"Run {run_id} completed: published {pub_count} event(s) directly to Explore Events; {pend_count} exception(s) queued for review."
+                            )
+                        elif pub_count > 0:
+                            messages.success(
+                                request,
+                                f"Run {run_id} completed: automatically published {pub_count} event(s) directly to Explore Events."
+                            )
+                        elif pend_count > 0:
+                            messages.info(
+                                request,
+                                f"Run {run_id} completed: imported {pend_count} event(s) queued for admin moderation."
+                            )
+                        elif summary['records_returned'] == 0:
+                            messages.warning(
+                                request,
+                                f"Run {run_id} completed, but 0 event records were returned from the source. No events were imported."
+                            )
+                        else:
+                            messages.info(
+                                request,
+                                f"Run {run_id} completed: checked {summary['records_returned']} listings ({summary['duplicates_skipped']} duplicates skipped, {summary['invalid_records_skipped']} invalid)."
+                            )
                     elif run_res.get('status') in ('PENDING', 'RUNNING'):
                         request.session['tinyfish_active_run_id'] = run_id
                         active_run_id = run_id

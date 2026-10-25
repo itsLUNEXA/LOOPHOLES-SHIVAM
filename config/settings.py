@@ -121,7 +121,7 @@ AUTHENTICATION_BACKENDS = [
 ]
 LOGIN_URL = 'accounts:login'
 LOGIN_REDIRECT_URL = 'events:event_list'
-LOGOUT_REDIRECT_URL = 'events:event_list'
+LOGOUT_REDIRECT_URL = 'events:landing'
 
 # Message tags mapping to Bootstrap 5 alert classes
 MESSAGE_TAGS = {

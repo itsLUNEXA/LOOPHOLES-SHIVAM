@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 from django.test import TestCase, Client
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -1698,3 +1699,373 @@ class VibentoRefinementAndDiscoveryTests(TestCase):
         self.assertNotContains(res, "sk-test-tinyfish")
         self.assertNotContains(res, "TINYFISH_API_KEY")
 
+
+class UnstopPipelineRegressionTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='tester@example.com',
+            email='tester@example.com',
+            password='Password123!'
+        )
+        self.admin = User.objects.create_user(
+            username='admin_sync@example.com',
+            email='admin_sync@example.com',
+            password='Password123!',
+            is_staff=True,
+            is_superuser=True
+        )
+        self.tech_cat = Category.objects.create(name='Technology & AI', slug='technology-ai')
+        self.now = timezone.now()
+
+    def test_extract_events_from_json_string_response(self):
+        from events.tinyfish import extract_events_from_tinyfish_response
+        payload = {
+            'status': 'COMPLETED',
+            'result': json.dumps({
+                'events': [
+                    {
+                        'title': 'Innovasia 2026 Hackathon',
+                        'start_datetime': (self.now + timedelta(days=5)).isoformat()
+                    }
+                ]
+            })
+        }
+        events = extract_events_from_tinyfish_response(payload)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['title'], 'Innovasia 2026 Hackathon')
+
+    def test_extract_events_from_markdown_code_fence(self):
+        from events.tinyfish import extract_events_from_tinyfish_response
+        inner_json = json.dumps({
+            'events': [
+                {
+                    'title': 'Viral Theory Contest',
+                    'start_datetime': (self.now + timedelta(days=3)).isoformat()
+                }
+            ]
+        })
+        payload = {
+            'status': 'COMPLETED',
+            'result': f"```json\n{inner_json}\n```"
+        }
+        events = extract_events_from_tinyfish_response(payload)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['title'], 'Viral Theory Contest')
+
+    def test_extract_events_from_direct_list(self):
+        from events.tinyfish import extract_events_from_tinyfish_response
+        payload = {
+            'status': 'COMPLETED',
+            'result': [
+                {
+                    'title': 'Robo Sumo Challenge',
+                    'start_datetime': (self.now + timedelta(days=4)).isoformat()
+                }
+            ]
+        }
+        events = extract_events_from_tinyfish_response(payload)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['title'], 'Robo Sumo Challenge')
+
+    def test_online_hackathon_location_handling(self):
+        from events.tinyfish import validate_and_import_events
+        raw_events = [
+            {
+                'title': 'National Online Hackathon 2026',
+                'description': 'A virtual national hackathon for developers',
+                'start_datetime': (self.now + timedelta(days=7)).isoformat(),
+                'venue': None,
+                'city': None,
+                'original_event_page_url': 'https://unstop.com/hackathons/online-2026',
+            }
+        ]
+        summary = validate_and_import_events(raw_events, 'https://unstop.com/', self.admin)
+        self.assertEqual(summary['records_returned'], 1)
+        self.assertEqual(summary['new_pending_created'], 1)
+        self.assertEqual(summary['invalid_records_skipped'], 0)
+
+        imported = Event.objects.get(title='National Online Hackathon 2026')
+        self.assertEqual(imported.venue_name, 'Online')
+        self.assertEqual(imported.city, 'Online')
+        self.assertEqual(imported.review_status, 'pending')
+
+    def test_relative_url_resolution(self):
+        from events.tinyfish import validate_and_import_events
+        raw_events = [
+            {
+                'title': 'Innovasia 2026 Challenge',
+                'description': 'Tech competition on Unstop',
+                'start_datetime': (self.now + timedelta(days=10)).isoformat(),
+                'venue': 'Online',
+                'city': 'Online',
+                'original_event_page_url': '/competitions/innovasia-2026',
+                'registration_url': '/competitions/innovasia-2026/register',
+            }
+        ]
+        summary = validate_and_import_events(raw_events, 'https://unstop.com/', self.admin)
+        self.assertEqual(summary['new_pending_created'], 1)
+
+        imported = Event.objects.get(title='Innovasia 2026 Challenge')
+        self.assertEqual(imported.original_source_url, 'https://unstop.com/competitions/innovasia-2026')
+        self.assertEqual(imported.registration_url, 'https://unstop.com/competitions/innovasia-2026/register')
+
+    def test_sync_status_summary_reports_pending_vs_approved(self):
+        from events.models import EventSource, SyncRunHistory
+        from events.services import get_sync_status_summary
+        source = EventSource.objects.create(
+            name="Unstop Test",
+            source_url="https://unstop.com/",
+            auto_approve_trusted=False
+        )
+        SyncRunHistory.objects.create(
+            source=source,
+            status='COMPLETED',
+            records_extracted_count=5,
+            records_created_count=3
+        )
+        status = get_sync_status_summary()
+        self.assertEqual(status['records_created'], 3)
+        self.assertEqual(status['records_pending'], 3)
+        self.assertEqual(status['records_approved'], 0)
+        self.assertEqual(status['records_extracted'], 5)
+
+    def test_ensure_default_event_sources(self):
+        from events.models import EventSource
+        from events.services import ensure_default_event_sources
+        EventSource.objects.all().delete()
+        created = ensure_default_event_sources()
+        self.assertTrue(len(created) > 0)
+        unstop = EventSource.objects.filter(source_url__icontains='unstop.com').first()
+        self.assertIsNotNone(unstop)
+        self.assertTrue(unstop.is_enabled)
+        self.assertTrue(unstop.auto_approve_trusted)
+        self.assertEqual(unstop.content_type, 'all')
+
+    def test_zero_records_run_not_reported_as_success_import(self):
+        from events.tinyfish import validate_and_import_events
+        summary = validate_and_import_events([], 'https://unstop.com/', self.admin)
+        self.assertEqual(summary['records_returned'], 0)
+        self.assertEqual(summary['new_pending_created'], 0)
+        self.assertEqual(summary['invalid_records_skipped'], 0)
+
+    def test_auto_publication_for_trusted_unstop_source(self):
+        from events.models import EventSource
+        from events.tinyfish import validate_and_import_events
+        source = EventSource.objects.create(
+            name="Unstop Events & Hackathons",
+            source_url="https://unstop.com/",
+            auto_approve_trusted=True
+        )
+        raw_events = [
+            {
+                'title': 'AI Builders Hackathon 2026',
+                'description': 'Online coding sprint on Unstop',
+                'start_datetime': (self.now + timedelta(days=6)).isoformat(),
+                'venue': 'Online',
+                'city': 'Online',
+                'original_event_page_url': 'https://unstop.com/hackathons/ai-builders-2026',
+            }
+        ]
+        summary = validate_and_import_events(
+            raw_events=raw_events,
+            source_url='https://unstop.com/',
+            user=self.admin,
+            source=source,
+            auto_approve=source.auto_approve_trusted
+        )
+        self.assertEqual(summary['new_approved_created'], 1)
+        self.assertEqual(summary['new_pending_created'], 0)
+        ev = Event.objects.get(title='AI Builders Hackathon 2026')
+        self.assertEqual(ev.review_status, 'approved')
+        self.assertIsNotNone(ev.reviewed_at)
+        # Appears immediately in public discovery feed query
+        self.assertTrue(Event.objects.filter(review_status='approved', pk=ev.pk).exists())
+
+    def test_hostname_trust_matching_and_lookalike_rejection(self):
+        from events.models import EventSource
+        from events.tinyfish import validate_and_import_events
+        source = EventSource.objects.create(
+            name="Unstop Trusted",
+            source_url="https://unstop.com/",
+            auto_approve_trusted=True
+        )
+        # Lookalike / untrusted external domain attempting to spoof Unstop
+        raw_events = [
+            {
+                'title': 'Phishing Challenge 2026',
+                'description': 'Unverified external contest',
+                'start_datetime': (self.now + timedelta(days=8)).isoformat(),
+                'venue': 'Online',
+                'city': 'Online',
+                'original_event_page_url': 'https://unstop-phishing.com/competitions/phishing-101',
+            }
+        ]
+        summary = validate_and_import_events(
+            raw_events=raw_events,
+            source_url='https://unstop.com/',
+            user=self.admin,
+            source=source,
+            auto_approve=source.auto_approve_trusted
+        )
+        # Must NOT auto-publish untrusted lookalike domains!
+        self.assertEqual(summary['new_approved_created'], 0)
+        self.assertEqual(summary['new_pending_created'], 1)
+        ev = Event.objects.get(title='Phishing Challenge 2026')
+        self.assertEqual(ev.review_status, 'pending')
+        self.assertIn("does not match trusted source hostname", ev.reviewer_feedback)
+
+    def test_preserve_admin_rejected_and_unpublished_events(self):
+        from events.models import EventSource
+        from events.tinyfish import validate_and_import_events
+        source = EventSource.objects.create(
+            name="Unstop Trusted",
+            source_url="https://unstop.com/",
+            auto_approve_trusted=True
+        )
+        # Admin previously rejected an event
+        rejected_event = Event.objects.create(
+            title='Deliberately Rejected Event',
+            slug='deliberately-rejected-event',
+            description='Not suitable for platform',
+            category=self.tech_cat,
+            start_datetime=self.now + timedelta(days=4),
+            submitted_by=self.admin,
+            source=source,
+            original_source_url='https://unstop.com/hackathons/rejected-hackathon',
+            review_status='rejected',
+            city='Online',
+            venue_name='Online',
+        )
+
+        raw_events = [
+            {
+                'title': 'Deliberately Rejected Event',
+                'description': 'Attempting re-import',
+                'start_datetime': (self.now + timedelta(days=4)).isoformat(),
+                'venue': 'Online',
+                'city': 'Online',
+                'original_event_page_url': 'https://unstop.com/hackathons/rejected-hackathon',
+            }
+        ]
+        summary = validate_and_import_events(
+            raw_events=raw_events,
+            source_url='https://unstop.com/',
+            user=self.admin,
+            source=source,
+            auto_approve=source.auto_approve_trusted
+        )
+        self.assertEqual(summary['new_approved_created'], 0)
+        self.assertEqual(summary['duplicates_skipped'], 1)
+        rejected_event.refresh_from_db()
+        self.assertEqual(rejected_event.review_status, 'rejected')  # Admin decision preserved!
+
+    def test_optional_fields_not_invented(self):
+        from events.tinyfish import validate_and_import_events
+        raw_events = [
+            {
+                'title': 'Delhi Tech Summit 2026',
+                'description': 'Tech meetup in Delhi',
+                'start_datetime': (self.now + timedelta(days=9)).isoformat(),
+                'venue': 'Campus Auditorium',
+                'city': None,  # Missing optional city
+                'original_event_page_url': 'https://unstop.com/events/delhi-tech-summit',
+            }
+        ]
+        summary = validate_and_import_events(
+            raw_events=raw_events,
+            source_url='https://unstop.com/',
+            user=self.admin,
+            auto_approve=False
+        )
+        self.assertEqual(summary['new_pending_created'], 1)
+        ev = Event.objects.get(title='Delhi Tech Summit 2026')
+        # Does NOT invent "Bengaluru"
+        self.assertNotEqual(ev.city, "Bengaluru")
+        self.assertEqual(ev.city, "")
+
+    @patch('events.views.trigger_visitor_entry_refresh')
+    def test_ajax_fragment_update_does_not_enqueue_refresh(self, mock_refresh):
+        """Completion-driven in-place UI update via AJAX does not trigger background sync loop."""
+        mock_refresh.return_value = []
+        # AJAX fetch with X-Requested-With header
+        resp = self.client.get(reverse('events:event_list'), HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(resp.status_code, 200)
+        mock_refresh.assert_not_called()
+
+        # Regular browser entry / full reload without AJAX header DOES trigger visitor refresh
+        resp_direct = self.client.get(reverse('events:event_list'))
+        self.assertEqual(resp_direct.status_code, 200)
+        mock_refresh.assert_called_once()
+
+    def test_content_based_category_mapping_accuracy(self):
+        """Categories are mapped using actual content analysis and not all generic competitions become Tech."""
+        from events.tinyfish import match_category
+        cat_biz = Category.objects.create(name='Startups & Business', slug='startups-business')
+        cat_comm = Category.objects.create(name='Community & Social', slug='community-social')
+
+        # 1. Economic / portfolio simulation -> Startups & Business
+        matched_biz = match_category(
+            category_hint="Quizzes & Treasure Hunt, Online Gaming",
+            title="Moral Hazard : An Economic Social-Deduction & Portfolio Simulation",
+            description="A social-deduction and portfolio simulation game involving economic concepts, macroeconomics, policy, logical puzzles."
+        )
+        self.assertEqual(matched_biz, cat_biz)
+
+        # 2. Treasure hunt / escape room -> Community & Social
+        matched_comm = match_category(
+            category_hint="Quizzes & Treasure Hunt",
+            title="Market Maze: Treasure Hunt & Escape Room",
+            description="A high-stakes treasure hunt and escape room competition testing logic and teamwork."
+        )
+        self.assertEqual(matched_comm, cat_comm)
+
+        # 3. Coding competition -> Technology & AI
+        matched_tech = match_category(
+            category_hint="Competitive Coding",
+            title="CodeClash: The November Nexus 2026",
+            description="A national-level coding competition testing problem-solving, DSA, and DBMS."
+        )
+        self.assertEqual(matched_tech, self.tech_cat)
+
+        # 4. Uncertain generic competition falls back to general Community category, not Tech
+        matched_fallback = match_category(
+            category_hint="",
+            title="Citywide Championship Challenge",
+            description="An open competition for local participants."
+        )
+        self.assertEqual(matched_fallback, cat_comm)
+
+    def test_optional_end_date_visibility_in_public_listings(self):
+        """Events with end_datetime=None are valid and visible in general listings and date filters."""
+        # Create event with end_datetime=None scheduled for tomorrow
+        tomorrow = timezone.localdate() + timedelta(days=1)
+        ev_no_end = Event.objects.create(
+            title="Open Source Community Meetup Without End Time",
+            description="Meetup without a strict end time specified by organizer.",
+            category=self.tech_cat,
+            start_datetime=self.now + timedelta(days=1),
+            end_datetime=None,  # Optional field is null
+            city="Bangalore",
+            area="Koramangala",
+            venue_name="Open Space",
+            organizer_display_name="Open Collective",
+            submitted_by=self.user,
+            review_status='approved',
+            event_status='scheduled',
+            is_free=True,
+        )
+
+        # 1. Appears in general public listing
+        resp = self.client.get(reverse('events:event_list'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Open Source Community Meetup Without End Time")
+
+        # 2. Appears in tomorrow date range filter
+        resp_tomorrow = self.client.get(f"{reverse('events:event_list')}?date_range=tomorrow")
+        self.assertEqual(resp_tomorrow.status_code, 200)
+        self.assertContains(resp_tomorrow, "Open Source Community Meetup Without End Time")
+
+        # 3. Appears in this_week date range filter
+        resp_week = self.client.get(f"{reverse('events:event_list')}?date_range=this_week")
+        self.assertEqual(resp_week.status_code, 200)
+        self.assertContains(resp_week, "Open Source Community Meetup Without End Time")
