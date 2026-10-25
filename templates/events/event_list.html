@@ -37,7 +37,67 @@
 <!-- Filter Section -->
 <div class="container mb-4 position-relative" id="filter-section" style="z-index: 50;">
   <div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 bg-white position-relative filter-card" style="z-index: 50;">
+
+    {% if user.is_authenticated %}
+      <!-- Discovery Mode Switcher: For You (Personalized) vs Browse All Events -->
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3 pb-3 border-bottom">
+        <div class="btn-group p-1 bg-light rounded-pill border" role="group" aria-label="Discovery Mode">
+          <a href="{% url 'events:event_list' %}?mode=for_you{% if not include_online %}&include_online=false{% endif %}" class="btn btn-sm rounded-pill px-4 fw-semibold {% if mode == 'for_you' %}btn-primary shadow-sm{% else %}btn-light text-muted{% endif %}">
+            <i class="bi bi-stars me-1"></i> For You (Personalized)
+          </a>
+          <a href="{% url 'events:event_list' %}?mode=all" class="btn btn-sm rounded-pill px-4 fw-semibold {% if mode == 'all' %}btn-primary shadow-sm{% else %}btn-light text-muted{% endif %}">
+            <i class="bi bi-grid me-1"></i> Browse All Events
+          </a>
+        </div>
+
+        {% if mode == 'for_you' %}
+          <div class="d-flex align-items-center gap-2">
+            <div class="form-check form-switch m-0">
+              <input class="form-check-input" type="checkbox" role="switch" id="includeOnlineSwitch" {% if include_online %}checked{% endif %} onchange="window.location.href='{% url 'events:event_list' %}?mode=for_you&include_online=' + this.checked;">
+              <label class="form-check-label small fw-semibold text-muted" for="includeOnlineSwitch">
+                <i class="bi bi-laptop me-1 text-primary"></i> Include online events
+              </label>
+            </div>
+          </div>
+        {% endif %}
+      </div>
+
+      {% if mode == 'for_you' %}
+        <!-- Active Personalization Scope -->
+        <div class="alert alert-primary-subtle border-0 rounded-4 px-3 py-2 small d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+          <div class="d-flex flex-wrap align-items-center gap-2">
+            <span class="fw-semibold text-dark"><i class="bi bi-geo-alt-fill text-danger me-1"></i>{{ preferred_city|default:"No preferred city set" }}</span>
+            <span class="text-muted">&bull;</span>
+            <span class="text-muted">Interests:</span>
+            {% for interest in user_interests %}
+              <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill">{{ interest }}</span>
+            {% empty %}
+              <span class="text-danger fst-italic">None selected</span>
+            {% endfor %}
+            {% if include_online %}
+              <span class="badge bg-light text-muted border rounded-pill"><i class="bi bi-check2"></i> Online events included</span>
+            {% else %}
+              <span class="badge bg-light text-muted border rounded-pill"><i class="bi bi-x"></i> Online events excluded</span>
+            {% endif %}
+          </div>
+          <div>
+            <a href="{% url 'accounts:profile' %}" class="btn btn-link btn-sm text-decoration-none p-0 fw-semibold">
+              Edit Preferences &rarr;
+            </a>
+          </div>
+        </div>
+      {% else %}
+        <!-- Browse All Events Banner -->
+        <div class="alert alert-light border rounded-4 px-3 py-2 small d-flex align-items-center justify-content-between mb-3">
+          <span class="text-muted"><i class="bi bi-globe me-1 text-primary"></i> Browsing full global catalog across all locations and categories.</span>
+          <a href="{% url 'events:event_list' %}?mode=for_you" class="btn btn-link btn-sm text-decoration-none p-0 fw-semibold">Switch to For You &rarr;</a>
+        </div>
+      {% endif %}
+    {% endif %}
+
     <form method="get" action="{% url 'events:event_list' %}#filter-section" id="filterForm" autocomplete="off">
+      <input type="hidden" name="mode" value="{{ mode }}">
+      <input type="hidden" name="include_online" value="{{ include_online|yesno:'true,false' }}">
       {% if search_query %}<input type="hidden" name="q" value="{{ search_query }}">{% endif %}
 
       <div class="row g-3">
@@ -225,7 +285,7 @@
         <ul class="pagination justify-content-center">
           {% if events.has_previous %}
             <li class="page-item">
-              <a class="page-link rounded-pill px-3 me-2" href="?page={{ events.previous_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_city %}&city={{ selected_city }}{% endif %}{% if selected_pricing %}&pricing={{ selected_pricing }}{% endif %}{% if selected_date_range %}&date_range={{ selected_date_range }}{% endif %}">
+              <a class="page-link rounded-pill px-3 me-2" href="?page={{ events.previous_page_number }}{% if mode %}&mode={{ mode }}{% endif %}{% if not include_online %}&include_online=false{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_city %}&city={{ selected_city }}{% endif %}{% if selected_pricing %}&pricing={{ selected_pricing }}{% endif %}{% if selected_date_range %}&date_range={{ selected_date_range }}{% endif %}">
                 &laquo; Previous
               </a>
             </li>
@@ -239,7 +299,7 @@
 
           {% if events.has_next %}
             <li class="page-item">
-              <a class="page-link rounded-pill px-3 ms-2" href="?page={{ events.next_page_number }}{% if search_query %}&q={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_city %}&city={{ selected_city }}{% endif %}{% if selected_pricing %}&pricing={{ selected_pricing }}{% endif %}{% if selected_date_range %}&date_range={{ selected_date_range }}{% endif %}">
+              <a class="page-link rounded-pill px-3 ms-2" href="?page={{ events.next_page_number }}{% if mode %}&mode={{ mode }}{% endif %}{% if not include_online %}&include_online=false{% endif %}{% if search_query %}&q={{ search_query }}{% endif %}{% if selected_category %}&category={{ selected_category }}{% endif %}{% if selected_city %}&city={{ selected_city }}{% endif %}{% if selected_pricing %}&pricing={{ selected_pricing }}{% endif %}{% if selected_date_range %}&date_range={{ selected_date_range }}{% endif %}">
                 Next &raquo;
               </a>
             </li>
@@ -250,35 +310,111 @@
 
   {% else %}
     <!-- Empty State -->
-    <div class="text-center py-5 my-4 bg-white rounded-4 shadow-sm border p-5">
-      <div class="d-inline-flex p-4 rounded-circle bg-light text-primary mb-3">
-        <i class="bi bi-search fs-1"></i>
-      </div>
-      <h3 class="fw-bold">No approved events match your criteria</h3>
-      <p class="text-muted mx-auto" style="max-width: 480px;">
-        {% if has_filters %}
-          We couldn't find any events with the selected filters. Try resetting the filters or broadening your search.
+    <div class="text-center py-5 my-4 bg-white rounded-4 shadow-sm border p-4 p-md-5">
+      {% if mode == 'for_you' and user.is_authenticated %}
+        {% if personalization_status == 'no_matches' %}
+          <div class="d-inline-flex p-4 rounded-circle bg-light text-primary mb-3">
+            <i class="bi bi-compass fs-1"></i>
+          </div>
+          <h3 class="fw-bold">No matching events available yet</h3>
+          <p class="text-muted mx-auto" style="max-width: 520px;">
+            We couldn't find any upcoming events matching:
+            <strong>{% for i in user_interests %}{{ i }}{% if not forloop.last %}, {% endif %}{% endfor %}</strong>
+            in <strong>{{ preferred_city }}</strong>.
+            {% if not include_online %}
+              Try enabling "Include online events" above, or explore the complete event catalog.
+            {% else %}
+              We are actively onboarding new community gatherings and verified organizer feeds.
+            {% endif %}
+          </p>
+          <div class="d-flex flex-wrap justify-content-center gap-3 mt-4">
+            <a href="{% url 'events:event_list' %}?mode=all" class="btn btn-primary rounded-pill px-4 shadow-sm">
+              <i class="bi bi-grid me-1"></i> Browse All Events
+            </a>
+            <a href="{% url 'accounts:profile' %}" class="btn btn-outline-secondary rounded-pill px-4">
+              <i class="bi bi-sliders me-1"></i> Update Preferences
+            </a>
+          </div>
+        {% elif personalization_status == 'missing_interests' %}
+          <div class="d-inline-flex p-4 rounded-circle bg-light text-primary mb-3">
+            <i class="bi bi-tags fs-1"></i>
+          </div>
+          <h3 class="fw-bold">Choose Your Interests</h3>
+          <p class="text-muted mx-auto" style="max-width: 480px;">
+            Select topics and activities you care about to see personalized event recommendations in {{ preferred_city }}.
+          </p>
+          <div class="d-flex flex-wrap justify-content-center gap-3 mt-4">
+            <a href="{% url 'accounts:interests' %}" class="btn btn-primary rounded-pill px-4 shadow-sm">
+              <i class="bi bi-stars me-1"></i> Select Interests
+            </a>
+            <a href="{% url 'events:event_list' %}?mode=all" class="btn btn-outline-secondary rounded-pill px-4">
+              Browse All Events
+            </a>
+          </div>
+        {% elif personalization_status == 'missing_location' %}
+          <div class="d-inline-flex p-4 rounded-circle bg-light text-primary mb-3">
+            <i class="bi bi-geo-alt fs-1"></i>
+          </div>
+          <h3 class="fw-bold">Set Your Preferred City</h3>
+          <p class="text-muted mx-auto" style="max-width: 480px;">
+            Set your preferred city in your profile so Vibento can surface local meetups and gatherings near you.
+          </p>
+          <div class="d-flex flex-wrap justify-content-center gap-3 mt-4">
+            <a href="{% url 'accounts:profile' %}" class="btn btn-primary rounded-pill px-4 shadow-sm">
+              <i class="bi bi-geo-alt-fill me-1"></i> Set Preferred City
+            </a>
+            <a href="{% url 'events:event_list' %}?mode=all" class="btn btn-outline-secondary rounded-pill px-4">
+              Browse All Events
+            </a>
+          </div>
         {% else %}
-          There are currently no upcoming approved events. Be the first organizer to submit a community event!
+          <div class="d-inline-flex p-4 rounded-circle bg-light text-primary mb-3">
+            <i class="bi bi-person-gear fs-1"></i>
+          </div>
+          <h3 class="fw-bold">Personalize Your Discovery</h3>
+          <p class="text-muted mx-auto" style="max-width: 480px;">
+            Complete your city and interest preferences to unlock your personalized discovery feed.
+          </p>
+          <div class="d-flex flex-wrap justify-content-center gap-3 mt-4">
+            <a href="{% url 'accounts:profile' %}" class="btn btn-primary rounded-pill px-4 shadow-sm">
+              Complete Profile Preferences
+            </a>
+            <a href="{% url 'events:event_list' %}?mode=all" class="btn btn-outline-secondary rounded-pill px-4">
+              Browse All Events
+            </a>
+          </div>
         {% endif %}
-      </p>
+      {% else %}
+        <!-- General Catalog Empty State -->
+        <div class="d-inline-flex p-4 rounded-circle bg-light text-primary mb-3">
+          <i class="bi bi-search fs-1"></i>
+        </div>
+        <h3 class="fw-bold">No approved events match your criteria</h3>
+        <p class="text-muted mx-auto" style="max-width: 480px;">
+          {% if has_filters %}
+            We couldn't find any events with the selected filters. Try resetting the filters or broadening your search.
+          {% else %}
+            There are currently no upcoming approved events. Be the first organizer to submit a community event!
+          {% endif %}
+        </p>
 
-      <div class="d-flex justify-content-center gap-3 mt-4">
-        {% if has_filters %}
-          <a href="{% url 'events:event_list' %}" class="btn btn-outline-primary rounded-pill px-4">
-            <i class="bi bi-arrow-counterclockwise me-1"></i> Reset All Filters
-          </a>
-        {% endif %}
-        {% if user.is_authenticated %}
-          <a href="{% url 'events:event_create' %}" class="btn btn-primary rounded-pill px-4 shadow-sm">
-            <i class="bi bi-plus-circle me-1"></i> Submit An Event
-          </a>
-        {% else %}
-          <a href="{% url 'accounts:signup' %}" class="btn btn-primary rounded-pill px-4 shadow-sm">
-            Sign Up to Submit Event
-          </a>
-        {% endif %}
-      </div>
+        <div class="d-flex justify-content-center gap-3 mt-4">
+          {% if has_filters %}
+            <a href="{% url 'events:event_list' %}?mode={{ mode }}" class="btn btn-outline-primary rounded-pill px-4">
+              <i class="bi bi-arrow-counterclockwise me-1"></i> Reset All Filters
+            </a>
+          {% endif %}
+          {% if user.is_authenticated %}
+            <a href="{% url 'events:event_create' %}" class="btn btn-primary rounded-pill px-4 shadow-sm">
+              <i class="bi bi-plus-circle me-1"></i> Submit An Event
+            </a>
+          {% else %}
+            <a href="{% url 'accounts:signup' %}" class="btn btn-primary rounded-pill px-4 shadow-sm">
+              Sign Up to Submit Event
+            </a>
+          {% endif %}
+        </div>
+      {% endif %}
     </div>
   {% endif %}
 </div>

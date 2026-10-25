@@ -516,56 +516,79 @@ def map_interest_to_category_slugs(interest_str: str) -> list[str]:
         if key == clean or key in clean or clean in key:
             slugs.update(target_slugs)
 
-    # Dynamic match against Category names and slugs in database
+    # Dynamic match against Category names and slugs in database (exact word/slug match, avoiding overbroad substrings)
     for cat in Category.objects.all():
         cname = cat.name.lower()
         cslug = cat.slug.lower()
-        if cname == clean or cname in clean or clean in cname or cslug == clean or cslug in clean:
+        if cname == clean or cslug == clean:
+            slugs.add(cat.slug)
+        elif len(clean) >= 4 and (f" {clean} " in f" {cname} " or f"-{clean}-" in f"-{cslug}-"):
             slugs.add(cat.slug)
 
     return list(slugs)
 
 
-def get_recommended_events_for_user(user, limit=6):
-    """
-    Returns personalized upcoming event recommendations for a user based strictly
-    on their explicit profile interests.
+CITY_ALIASES = {
+    'bengaluru': ['bengaluru', 'bangalore'],
+    'bangalore': ['bengaluru', 'bangalore'],
+    'delhi': ['delhi', 'new delhi', 'ncr', 'delhi ncr'],
+    'new delhi': ['delhi', 'new delhi', 'ncr', 'delhi ncr'],
+    'mumbai': ['mumbai', 'bombay'],
+    'bombay': ['mumbai', 'bombay'],
+    'pune': ['pune'],
+    'hyderabad': ['hyderabad'],
+    'chennai': ['chennai', 'madras'],
+    'kolkata': ['kolkata', 'calcutta'],
+    'gurugram': ['gurugram', 'gurgaon', 'delhi', 'ncr'],
+    'gurgaon': ['gurugram', 'gurgaon', 'delhi', 'ncr'],
+    'noida': ['noida', 'delhi', 'ncr'],
+}
 
-    Role does NOT dictate or stereotype interests.
-    Only published, eligible, scheduled upcoming events are returned.
+
+def get_city_alias_list(city_str):
+    """
+    Returns normalized reviewed alias list for a city name.
+    Does not invent equivalences or use broad substring matching.
+    """
+    if not city_str:
+        return []
+    clean = city_str.strip().lower()
+    return CITY_ALIASES.get(clean, [clean])
+
+
+def get_personalized_events_queryset(user, include_online=True):
+    """
+    Returns a QuerySet of eligible published events matching BOTH the user's
+    explicit interests AND location.
 
     Returns:
-        tuple (recommended_events, user_interests, status_code)
+        tuple (queryset, user_interests, preferred_city, status_code)
         status_code:
         - 'matched': Found matching published events
-        - 'no_matches': User has explicit interests, but no matching published events exist
-        - 'no_interests': User has no interests configured in their profile
+        - 'no_matches': User has preferences, but no matching events exist
+        - 'missing_preferences': User has neither interests nor city configured
+        - 'missing_interests': User has city configured, but no interests
+        - 'missing_location': User has interests configured, but no city
     """
     if not user or not user.is_authenticated:
-        return [], [], 'no_interests'
+        return Event.objects.none(), [], '', 'missing_preferences'
 
     profile = getattr(user, 'profile', None)
-    if not profile or not getattr(profile, 'interests', None) or not profile.interests.strip():
+    if not profile:
         from accounts.models import UserProfile
         profile = UserProfile.objects.filter(user=user).first()
 
-    if not profile or not profile.interests or not profile.interests.strip():
-        return [], [], 'no_interests'
+    raw_interests = getattr(profile, 'interests', '') or ''
+    user_interests = [i.strip() for i in raw_interests.split(',') if i.strip()]
+    preferred_city = (getattr(profile, 'preferred_city', '') or '').strip()
+    preferred_area = (getattr(profile, 'preferred_area', '') or '').strip()
 
-    user_interests = [i.strip() for i in profile.interests.split(',') if i.strip()]
+    if not user_interests and not preferred_city:
+        return Event.objects.none(), [], '', 'missing_preferences'
     if not user_interests:
-        return [], [], 'no_interests'
-
-    category_slugs = set()
-    keyword_q = Q()
-
-    for interest in user_interests:
-        slugs = map_interest_to_category_slugs(interest)
-        category_slugs.update(slugs)
-
-        clean = interest.lower().strip()
-        if len(clean) >= 3:
-            keyword_q |= Q(title__icontains=clean) | Q(description__icontains=clean)
+        return Event.objects.none(), [], preferred_city, 'missing_interests'
+    if not preferred_city:
+        return Event.objects.none(), user_interests, '', 'missing_location'
 
     # Base query for eligible published upcoming events
     now = timezone.now()
@@ -579,41 +602,89 @@ def get_recommended_events_for_user(user, limit=6):
         Q(end_datetime__isnull=True, start_datetime__date=today)
     ).select_related('category', 'submitted_by', 'source')
 
+    # 1. Interests Filter (Filter 1)
+    category_slugs = set()
+    keyword_q = Q()
+    for interest in user_interests:
+        slugs = map_interest_to_category_slugs(interest)
+        category_slugs.update(slugs)
+        clean = interest.lower().strip()
+        if len(clean) >= 3:
+            keyword_q |= Q(title__icontains=clean) | Q(description__icontains=clean)
+
+    interest_q = Q()
+    if category_slugs:
+        interest_q |= Q(category__slug__in=category_slugs)
+    if keyword_q:
+        interest_q |= keyword_q
+
+    if not interest_q:
+        return Event.objects.none(), user_interests, preferred_city, 'no_matches'
+
+    qs = eligible_events.filter(interest_q)
+
+    # 2. Location Filter (Filter 2 - MUST match interests AND location)
+    city_aliases = get_city_alias_list(preferred_city)
+
+    # Physical events must match user's city aliases exactly and cannot be 'Online' or empty
+    physical_q = Q()
+    for alias in city_aliases:
+        physical_q |= Q(city__iexact=alias)
+    physical_q &= ~Q(city__iexact='online') & ~Q(city='') & ~Q(city__isnull=True)
+
+    if include_online:
+        online_q = Q(city__iexact='online') | Q(venue_name__iexact='online')
+        location_q = physical_q | online_q
+    else:
+        location_q = physical_q
+
+    qs = qs.filter(location_q).distinct()
+
+    # Explainable ordering: preferred area first if specified, then start_datetime
+    if preferred_area:
+        from django.db.models import Case, When, Value, IntegerField
+        qs = qs.annotate(
+            area_priority=Case(
+                When(area__icontains=preferred_area, then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField()
+            )
+        ).order_by('area_priority', 'start_datetime')
+    else:
+        qs = qs.order_by('start_datetime')
+
+    if not qs.exists():
+        return Event.objects.none(), user_interests, preferred_city, 'no_matches'
+
+    return qs, user_interests, preferred_city, 'matched'
+
+
+def get_recommended_events_for_user(user, limit=6, include_online=True):
+    """
+    Returns personalized upcoming event recommendations for a user based on
+    BOTH explicit interests AND location.
+
+    Role does NOT dictate or stereotype interests.
+    Only published, eligible, scheduled upcoming events are returned.
+
+    Returns:
+        tuple (recommended_events, user_interests, status_code)
+    """
+    qs, user_interests, preferred_city, status_code = get_personalized_events_queryset(
+        user, include_online=include_online
+    )
+    if status_code != 'matched':
+        return [], user_interests, status_code
+
     # Exclude events the user is already confirmed enrolled in
     enrolled_ids = EventEnrollment.objects.filter(
         user=user,
         status='confirmed'
     ).values_list('event_id', flat=True)
     if enrolled_ids:
-        eligible_events = eligible_events.exclude(id__in=enrolled_ids)
+        qs = qs.exclude(id__in=enrolled_ids)
 
-    # Combined filter
-    matching_q = Q()
-    if category_slugs:
-        matching_q |= Q(category__slug__in=category_slugs)
-    if keyword_q:
-        matching_q |= keyword_q
-
-    if not matching_q:
-        return [], user_interests, 'no_matches'
-
-    matched_qs = eligible_events.filter(matching_q).distinct()
-
-    # Explainable ordering:
-    # 1. Preferred city first if specified
-    # 2. Soonest upcoming start_datetime first
-    if profile.preferred_city and profile.preferred_city.strip():
-        city_clean = profile.preferred_city.strip()
-        city_events = list(matched_qs.filter(city__iexact=city_clean).order_by('start_datetime')[:limit])
-        remaining = limit - len(city_events)
-        if remaining > 0:
-            other_events = list(matched_qs.exclude(city__iexact=city_clean).order_by('start_datetime')[:remaining])
-            recommended_events = city_events + other_events
-        else:
-            recommended_events = city_events
-    else:
-        recommended_events = list(matched_qs.order_by('start_datetime')[:limit])
-
+    recommended_events = list(qs[:limit])
     if not recommended_events:
         return [], user_interests, 'no_matches'
 

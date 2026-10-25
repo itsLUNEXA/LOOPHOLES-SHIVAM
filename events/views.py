@@ -10,7 +10,12 @@ from django.http import Http404, JsonResponse
 
 from .models import Event, WhatsAppSubmission, Category, EventEnrollment
 from .forms import EventForm, WhatsAppEventSubmissionForm
-from .services import trigger_visitor_entry_refresh, get_sync_status_summary, get_recommended_events_for_user
+from .services import (
+    trigger_visitor_entry_refresh,
+    get_sync_status_summary,
+    get_recommended_events_for_user,
+    get_personalized_events_queryset,
+)
 from accounts.models import UserProfile
 
 
@@ -29,10 +34,11 @@ def landing_page(request):
 
 def event_list(request):
     """
-    Public event discovery listing.
-    Only approved, upcoming, non-cancelled events are displayed.
+    Event discovery listing.
+    For logged-in users: defaults to personalized 'for_you' mode matching BOTH
+    explicit interests AND location (with an explicit 'Browse All Events' mode).
+    For visitors: defaults to global 'all' catalog.
     Supports keyword search, category, date-range, city/area, and free/paid filters.
-    Automatically enqueues non-blocking TinyFish source refresh on initial website entry.
     """
     is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest'
     sync_outcomes = []
@@ -42,14 +48,34 @@ def event_list(request):
 
     now = timezone.now()
     today = timezone.localdate()
-    events = Event.objects.filter(
-        review_status='approved',
-        event_status='scheduled'
-    ).filter(
-        Q(end_datetime__gte=now) |
-        Q(end_datetime__isnull=True, start_datetime__gte=now) |
-        Q(end_datetime__isnull=True, start_datetime__date=today)
-    ).select_related('category', 'submitted_by', 'source').order_by('start_datetime')
+
+    # Shared Personalization: Default logged-in discovery to "For You"
+    mode = request.GET.get('mode', '').strip().lower()
+    include_online_param = request.GET.get('include_online', 'true').strip().lower()
+    include_online = include_online_param != 'false'
+    is_logged_in = request.user.is_authenticated
+
+    if not mode:
+        mode = 'for_you' if is_logged_in else 'all'
+
+    user_interests = []
+    preferred_city = ''
+    personalization_status = 'all'
+
+    if mode == 'for_you' and is_logged_in:
+        personalized_qs, user_interests, preferred_city, personalization_status = get_personalized_events_queryset(
+            request.user, include_online=include_online
+        )
+        events = personalized_qs
+    else:
+        events = Event.objects.filter(
+            review_status='approved',
+            event_status='scheduled'
+        ).filter(
+            Q(end_datetime__gte=now) |
+            Q(end_datetime__isnull=True, start_datetime__gte=now) |
+            Q(end_datetime__isnull=True, start_datetime__date=today)
+        ).select_related('category', 'submitted_by', 'source').order_by('start_datetime')
 
     # Query params
     q = request.GET.get('q', '').strip()
@@ -183,6 +209,12 @@ def event_list(request):
         'total_events_count': paginator.count,
         'sync_status': get_sync_status_summary(),
         'sync_outcomes': sync_outcomes,
+        # Shared personalization context
+        'mode': mode,
+        'include_online': include_online,
+        'user_interests': user_interests,
+        'preferred_city': preferred_city,
+        'personalization_status': personalization_status,
     })
 
 
@@ -321,8 +353,13 @@ def user_dashboard(request):
     # Compact red reminder is the nearest future deadline
     nearest_deadline = deadlines_list[0] if deadlines_list else None
 
-    # Recommendations based strictly on user's explicit profile interests
-    recommended_events, user_interests, rec_status = get_recommended_events_for_user(request.user)
+    include_online_param = request.GET.get('include_online', 'true').strip().lower()
+    include_online = include_online_param != 'false'
+
+    # Recommendations based strictly on user's explicit profile interests AND location
+    recommended_events, user_interests, rec_status = get_recommended_events_for_user(
+        request.user, limit=6, include_online=include_online
+    )
 
     return render(request, 'events/user_dashboard.html', {
         'profile': profile,
@@ -333,6 +370,8 @@ def user_dashboard(request):
         'nearest_deadline': nearest_deadline,
         'recommended_events': recommended_events,
         'user_interests': user_interests,
+        'preferred_city': profile.preferred_city,
+        'include_online': include_online,
         'recommendation_status': rec_status,
     })
 

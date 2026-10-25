@@ -348,7 +348,10 @@
               <i class="bi bi-compass text-primary me-2"></i>Explore Events &mdash; Recommended for You
             </h2>
             <div class="d-flex flex-wrap align-items-center gap-1 small text-muted">
-              <span>Based on your interests:</span>
+              <span>Based on your preferences:</span>
+              {% if preferred_city %}
+                <span class="badge bg-light text-dark border rounded-pill"><i class="bi bi-geo-alt-fill text-danger me-1"></i>{{ preferred_city }}</span>
+              {% endif %}
               {% for interest in user_interests %}
                 <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill">{{ interest }}</span>
               {% empty %}
@@ -356,7 +359,7 @@
               {% endfor %}
             </div>
           </div>
-          <a href="{% url 'events:event_list' %}" class="btn btn-sm btn-outline-primary rounded-pill px-3 fw-semibold">
+          <a href="{% url 'events:event_list' %}?mode=all" class="btn btn-sm btn-outline-primary rounded-pill px-3 fw-semibold">
             <i class="bi bi-grid me-1"></i> Browse All Events
           </a>
         </div>
@@ -377,11 +380,11 @@
                             <i class="bi bi-whatsapp"></i> WhatsApp
                           </span>
                         {% elif rec.source_type == 'external' %}
-                          <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle rounded-pill small" title="Source: {{ rec.source.name|default:'Unstop' }}">
-                            <i class="bi bi-box-arrow-up-right me-1"></i> Source: {{ rec.source.name|default:"Unstop"|truncatechars:14 }}
+                          <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle rounded-pill small" title="Source: {{ rec.source.name|default:'Unstop' }} • Checked: {{ rec.source_checked_at|date:'M d, h:i A'|default:'Recently' }}">
+                            <i class="bi bi-box-arrow-up-right me-1"></i> Source: {{ rec.source.name|default:"Unstop"|truncatechars:14 }}{% if rec.source_checked_at %} <small class="text-muted ms-1">({{ rec.source_checked_at|date:"M d" }})</small>{% endif %}
                           </span>
                         {% else %}
-                          <span class="badge badge-organizer-source rounded-pill small">
+                          <span class="badge badge-organizer-source rounded-pill small" title="Submitted by Host / Organizer">
                             <i class="bi bi-patch-check"></i> Host
                           </span>
                         {% endif %}
@@ -433,14 +436,14 @@
               </div>
               <h3 class="h6 fw-bold text-dark mb-1">No matching events available yet</h3>
               <p class="text-muted small mx-auto mb-3" style="max-width: 480px;">
-                We don't have any upcoming events matching your selected interests ({% for i in user_interests %}{{ i }}{% if not forloop.last %}, {% endif %}{% endfor %}) at the moment.
+                We don't have any upcoming events matching your selected interests ({% for i in user_interests %}{{ i }}{% if not forloop.last %}, {% endif %}{% endfor %}) in {{ preferred_city|default:"your location" }} at the moment.
               </p>
               <div class="d-flex justify-content-center gap-2">
                 <a href="{% url 'accounts:profile' %}" class="btn btn-sm btn-outline-secondary rounded-pill px-3">
-                  <i class="bi bi-pencil-square me-1"></i> Update Interests
+                  <i class="bi bi-pencil-square me-1"></i> Update Preferences
                 </a>
-                <a href="{% url 'events:event_list' %}" class="btn btn-sm btn-primary rounded-pill px-4">
-                  <i class="bi bi-compass me-1"></i> Browse All Events
+                <a href="{% url 'events:event_list' %}?mode=all" class="btn btn-sm btn-primary rounded-pill px-4">
+                  <i class="bi bi-grid me-1"></i> Browse All Events
                 </a>
               </div>
             </div>

@@ -18,6 +18,11 @@ class EventManagementAndDiscoveryTests(TestCase):
         self.owner = User.objects.create_user(username='eventowner', email='owner@test.com', password='OwnerPassword123!')
         self.other_user = User.objects.create_user(username='otheruser', email='other@test.com', password='OtherPassword123!')
 
+        self.owner_prof = self.owner.profile
+        self.owner_prof.interests = 'Tech & AI'
+        self.owner_prof.preferred_city = 'Bengaluru'
+        self.owner_prof.save()
+
         # Categories
         self.cat_tech = Category.objects.create(name='Tech & AI', slug='tech-ai')
         self.cat_music = Category.objects.create(name='Live Music', slug='live-music')
@@ -2142,8 +2147,53 @@ class ProfilePersonalizationRecommendationTests(TestCase):
             is_free=True,
         )
 
+        # Online Tech Event
+        self.online_tech_event = Event.objects.create(
+            title="Global Virtual AI Hackathon 2026",
+            category=self.cat_tech,
+            description="Virtual online competition for developers worldwide.",
+            start_datetime=self.now + timedelta(days=5),
+            end_datetime=self.now + timedelta(days=5, hours=8),
+            city="Online",
+            venue_name="Online",
+            submitted_by=self.admin,
+            review_status='approved',
+            event_status='scheduled',
+            is_free=True,
+        )
+
+        # Tech event in Mumbai (different city from Bengaluru student)
+        self.mumbai_tech_event = Event.objects.create(
+            title="Mumbai Tech Summit 2026",
+            category=self.cat_tech,
+            description="Physical conference at IIT Bombay campus.",
+            start_datetime=self.now + timedelta(days=6),
+            end_datetime=self.now + timedelta(days=6, hours=8),
+            city="Mumbai",
+            venue_name="IIT Bombay",
+            submitted_by=self.admin,
+            review_status='approved',
+            event_status='scheduled',
+            is_free=True,
+        )
+
+        # Bangalore Music Event (for Bengaluru users)
+        self.bangalore_music_event = Event.objects.create(
+            title="Indiranagar Acoustic Sunset Jam",
+            category=self.cat_music,
+            description="Acoustic open jam in Indiranagar Bengaluru.",
+            start_datetime=self.now + timedelta(days=4),
+            end_datetime=self.now + timedelta(days=4, hours=3),
+            city="Bengaluru",
+            venue_name="Indiranagar Park",
+            submitted_by=self.admin,
+            review_status='approved',
+            event_status='scheduled',
+            is_free=True,
+        )
+
         # Users and Profiles
-        # Profile A: Student; interest: Technology & AI
+        # Profile A: Student; interest: Technology & AI; city: Bengaluru
         self.user_a = User.objects.create_user(username='student_tech_user', email='a@test.com', password='password123')
         self.prof_a = self.user_a.profile
         self.prof_a.profile_type = 'student'
@@ -2152,7 +2202,7 @@ class ProfilePersonalizationRecommendationTests(TestCase):
         self.prof_a.save()
         self.user_a.refresh_from_db()
 
-        # Profile B: Working Professional; interests: Jamming and Sports & Outdoor
+        # Profile B: Working Professional; interests: Jamming and Sports & Outdoor; city: Mumbai
         self.user_b = User.objects.create_user(username='pro_jam_user', email='b@test.com', password='password123')
         self.prof_b = self.user_b.profile
         self.prof_b.profile_type = 'professional'
@@ -2161,7 +2211,7 @@ class ProfilePersonalizationRecommendationTests(TestCase):
         self.prof_b.save()
         self.user_b.refresh_from_db()
 
-        # Profile C: Student; interest: Jamming (Different role, same interest as B)
+        # Profile C: Student; interest: Jamming; city: Mumbai
         self.user_c = User.objects.create_user(username='student_jam_user', email='c@test.com', password='password123')
         self.prof_c = self.user_c.profile
         self.prof_c.profile_type = 'student'
@@ -2170,11 +2220,12 @@ class ProfilePersonalizationRecommendationTests(TestCase):
         self.prof_c.save()
         self.user_c.refresh_from_db()
 
-        # Profile D: Working Professional; interest: Sports & Outdoor (0 DB coverage)
+        # Profile D: Working Professional; interest: Sports & Outdoor; city: Delhi (0 DB coverage)
         self.user_d = User.objects.create_user(username='pro_sports_only', email='d@test.com', password='password123')
         self.prof_d = self.user_d.profile
         self.prof_d.profile_type = 'professional'
         self.prof_d.interests = 'Sports & Outdoor'
+        self.prof_d.preferred_city = 'Delhi'
         self.prof_d.save()
         self.user_d.refresh_from_db()
 
@@ -2279,10 +2330,11 @@ class ProfilePersonalizationRecommendationTests(TestCase):
         )
         self.assertEqual(resp_update.status_code, 200)
 
-        # Now dashboard shows music, not tech
+        # Now dashboard shows Bengaluru music event, not tech and not Mumbai music
         resp_after = self.client.get(reverse('events:user_dashboard'))
-        self.assertContains(resp_after, "Bandra Sunset Acoustic Jam")
+        self.assertContains(resp_after, "Indiranagar Acoustic Sunset Jam")
         self.assertNotContains(resp_after, "Bangalore Tech Hackathon 2026")
+        self.assertNotContains(resp_after, "Bandra Sunset Acoustic Jam")
 
     def test_account_switching_does_not_leak_recommendations(self):
         """Logging out and logging in as another user never leaks or reuses recommendations."""
@@ -2371,3 +2423,76 @@ class ProfilePersonalizationRecommendationTests(TestCase):
         resp_b = self.client.get(reverse('events:user_dashboard'))
         self.assertContains(resp_b, "Bandra Sunset Acoustic Jam")
         self.assertNotContains(resp_b, "Autonomous AI Agent Hackathon 2026")
+
+    def test_location_and_interest_filtering_both_required(self):
+        """Physical events MUST match both interest AND location. Other-city events are excluded."""
+        from events.services import get_personalized_events_queryset
+        qs, ints, city, status = get_personalized_events_queryset(self.user_a, include_online=True)
+        self.assertEqual(status, 'matched')
+        self.assertEqual(city, 'Bengaluru')
+        matched_ids = [e.id for e in qs]
+
+        # 1. Matches Bengaluru tech event
+        self.assertIn(self.tech_event.id, matched_ids)
+        # 2. Matches online tech event
+        self.assertIn(self.online_tech_event.id, matched_ids)
+        # 3. EXCLUDES Mumbai tech event (interests match, but physical location is Mumbai)
+        self.assertNotIn(self.mumbai_tech_event.id, matched_ids)
+        # 4. EXCLUDES Mumbai music event (neither interests nor location match)
+        self.assertNotIn(self.music_event.id, matched_ids)
+
+    def test_discover_events_defaults_to_for_you_for_logged_in_users(self):
+        """Logged-in users visiting /events/ default to 'For You' personalized feed."""
+        self.client.login(username='student_tech_user', password='password123')
+        resp = self.client.get(reverse('events:event_list'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['mode'], 'for_you')
+
+        # Shows matching Bengaluru tech event
+        self.assertContains(resp, "Bangalore Tech Hackathon 2026")
+        # Excludes other-city physical tech events
+        self.assertNotContains(resp, "Mumbai Tech Summit 2026")
+
+    def test_discover_events_browse_all_mode_shows_global_catalog(self):
+        """Explicit ?mode=all opens full global catalog across all cities and categories."""
+        self.client.login(username='student_tech_user', password='password123')
+        resp = self.client.get(f"{reverse('events:event_list')}?mode=all")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['mode'], 'all')
+
+        # Shows all events across different cities
+        self.assertContains(resp, "Bangalore Tech Hackathon 2026")
+        self.assertContains(resp, "Mumbai Tech Summit 2026")
+        self.assertContains(resp, "Bandra Sunset Acoustic Jam")
+
+    def test_online_events_toggle_behavior(self):
+        """Online events can be toggled on or off explicitly; physical location matching remains strict."""
+        self.client.login(username='student_tech_user', password='password123')
+
+        # 1. With include_online=true: online tech event is visible
+        resp_on = self.client.get(f"{reverse('events:event_list')}?mode=for_you&include_online=true")
+        self.assertContains(resp_on, "Global Virtual AI Hackathon 2026")
+
+        # 2. With include_online=false: online tech event is excluded
+        resp_off = self.client.get(f"{reverse('events:event_list')}?mode=for_you&include_online=false")
+        self.assertNotContains(resp_off, "Global Virtual AI Hackathon 2026")
+        # Physical Bengaluru event remains visible
+        self.assertContains(resp_off, "Bangalore Tech Hackathon 2026")
+
+    def test_city_aliases_reviewed_matching(self):
+        """Reviewed city aliases (Bangalore vs Bengaluru) match without broad substring errors."""
+        from events.services import get_city_alias_list
+        aliases = get_city_alias_list("Bengaluru")
+        self.assertIn("bengaluru", aliases)
+        self.assertIn("bangalore", aliases)
+
+    def test_missing_location_produces_honest_prompt(self):
+        """User with interests but missing preferred city receives prompt and honest state."""
+        self.prof_a.preferred_city = ''
+        self.prof_a.save()
+        self.user_a.refresh_from_db()
+
+        self.client.login(username='student_tech_user', password='password123')
+        resp = self.client.get(reverse('events:event_list'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Set Your Preferred City")
