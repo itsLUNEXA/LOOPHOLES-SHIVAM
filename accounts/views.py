@@ -185,11 +185,10 @@ def interests_view(request):
         form = InterestsSelectionForm(request.POST)
         if form.is_valid():
             combined = form.get_combined_interests()
-            if combined:
-                profile.interests = combined
-                profile.save()
-            messages.success(request, "Preferences saved! Explore upcoming events in your area.")
-            return redirect('events:event_list')
+            profile.interests = combined
+            profile.save()
+            messages.success(request, "Preferences saved! Your personalized recommendations have been updated.")
+            return redirect('events:user_dashboard')
     else:
         # Prepopulate existing interests
         current = [i.strip() for i in (profile.interests or '').split(',') if i.strip()]

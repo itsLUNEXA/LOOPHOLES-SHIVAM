@@ -2069,3 +2069,305 @@ class UnstopPipelineRegressionTests(TestCase):
         resp_week = self.client.get(f"{reverse('events:event_list')}?date_range=this_week")
         self.assertEqual(resp_week.status_code, 200)
         self.assertContains(resp_week, "Open Source Community Meetup Without End Time")
+
+
+class ProfilePersonalizationRecommendationTests(TestCase):
+    """
+    Tests for explicit profile-based event recommendations on the user dashboard.
+    Verifies:
+    1. Student with Technology & AI receives matching tech records.
+    2. Working Professional with Jamming/Sports & Outdoor receives matching music records.
+    3. Same role with different interests receives different recommendations.
+    4. Different roles with the same interests share relevant recommendations (no stereotyping).
+    5. No matching records produces an honest empty state with 'Browse All Events' link.
+    6. Profile interest updates refresh recommendations immediately.
+    7. Account switching / logout never leaks or reuses another user's recommendations.
+    8. Background sync checks do not replace personalized results with the global feed.
+    9. Recommendation cards do not automatically enroll users; already-enrolled events are excluded.
+    """
+
+    def setUp(self):
+        from accounts.models import UserProfile
+        self.client = Client()
+        self.now = timezone.now()
+
+        # Admin user
+        self.admin = User.objects.create_superuser(username='rec_admin', email='rec_admin@test.com', password='password123')
+
+        # Categories
+        self.cat_tech = Category.objects.create(name='Technology & AI', slug='technology-ai')
+        self.cat_music = Category.objects.create(name='Music & Live Jam', slug='music-live-jam')
+        self.cat_arts = Category.objects.create(name='Arts & Crafts', slug='arts-crafts')
+
+        # Events
+        self.tech_event = Event.objects.create(
+            title="Bangalore Tech Hackathon 2026",
+            category=self.cat_tech,
+            description="Deep dive into LLMs and generative agents.",
+            start_datetime=self.now + timedelta(days=2),
+            end_datetime=self.now + timedelta(days=2, hours=8),
+            city="Bengaluru",
+            venue_name="Innovation Hub",
+            submitted_by=self.admin,
+            review_status='approved',
+            event_status='scheduled',
+            is_free=True,
+        )
+
+        self.music_event = Event.objects.create(
+            title="Bandra Sunset Acoustic Jam & Open Mic",
+            category=self.cat_music,
+            description="Bring your acoustic guitar, cajon, or just your voice for a relaxed jam.",
+            start_datetime=self.now + timedelta(days=3),
+            end_datetime=self.now + timedelta(days=3, hours=3),
+            city="Mumbai",
+            venue_name="Bandstand Amphitheatre",
+            submitted_by=self.admin,
+            review_status='approved',
+            event_status='scheduled',
+            is_free=True,
+        )
+
+        self.art_event = Event.objects.create(
+            title="Pottery & Watercolor Weekend",
+            category=self.cat_arts,
+            description="Hands-on pottery workshop with ceramic artists.",
+            start_datetime=self.now + timedelta(days=4),
+            end_datetime=self.now + timedelta(days=4, hours=4),
+            city="Bengaluru",
+            venue_name="Art Loft",
+            submitted_by=self.admin,
+            review_status='approved',
+            event_status='scheduled',
+            is_free=True,
+        )
+
+        # Users and Profiles
+        # Profile A: Student; interest: Technology & AI
+        self.user_a = User.objects.create_user(username='student_tech_user', email='a@test.com', password='password123')
+        self.prof_a = self.user_a.profile
+        self.prof_a.profile_type = 'student'
+        self.prof_a.interests = 'Technology & AI'
+        self.prof_a.preferred_city = 'Bengaluru'
+        self.prof_a.save()
+        self.user_a.refresh_from_db()
+
+        # Profile B: Working Professional; interests: Jamming and Sports & Outdoor
+        self.user_b = User.objects.create_user(username='pro_jam_user', email='b@test.com', password='password123')
+        self.prof_b = self.user_b.profile
+        self.prof_b.profile_type = 'professional'
+        self.prof_b.interests = 'Jamming, Sports & Outdoor'
+        self.prof_b.preferred_city = 'Mumbai'
+        self.prof_b.save()
+        self.user_b.refresh_from_db()
+
+        # Profile C: Student; interest: Jamming (Different role, same interest as B)
+        self.user_c = User.objects.create_user(username='student_jam_user', email='c@test.com', password='password123')
+        self.prof_c = self.user_c.profile
+        self.prof_c.profile_type = 'student'
+        self.prof_c.interests = 'Jamming'
+        self.prof_c.preferred_city = 'Mumbai'
+        self.prof_c.save()
+        self.user_c.refresh_from_db()
+
+        # Profile D: Working Professional; interest: Sports & Outdoor (0 DB coverage)
+        self.user_d = User.objects.create_user(username='pro_sports_only', email='d@test.com', password='password123')
+        self.prof_d = self.user_d.profile
+        self.prof_d.profile_type = 'professional'
+        self.prof_d.interests = 'Sports & Outdoor'
+        self.prof_d.save()
+        self.user_d.refresh_from_db()
+
+    def test_student_with_tech_interest_receives_tech_events(self):
+        """Profile A (Student, Technology & AI) receives matching tech events only."""
+        from events.services import get_recommended_events_for_user
+        recs, ints, status = get_recommended_events_for_user(self.user_a)
+        self.assertEqual(status, 'matched')
+        self.assertIn('Technology & AI', ints)
+        rec_ids = [e.id for e in recs]
+        self.assertIn(self.tech_event.id, rec_ids)
+        self.assertNotIn(self.music_event.id, rec_ids)
+        self.assertNotIn(self.art_event.id, rec_ids)
+
+        # In dashboard UI
+        self.client.login(username='student_tech_user', password='password123')
+        resp = self.client.get(reverse('events:user_dashboard'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Bangalore Tech Hackathon 2026")
+        self.assertNotContains(resp, "Bandra Sunset Acoustic Jam")
+        self.assertNotContains(resp, "Pottery & Watercolor Weekend")
+
+    def test_professional_with_jamming_and_sports_receives_music_records(self):
+        """Profile B (Professional, Jamming + Sports) receives music records and not unrelated tech."""
+        from events.services import get_recommended_events_for_user
+        recs, ints, status = get_recommended_events_for_user(self.user_b)
+        self.assertEqual(status, 'matched')
+        rec_ids = [e.id for e in recs]
+        self.assertIn(self.music_event.id, rec_ids)
+        self.assertNotIn(self.tech_event.id, rec_ids)
+        self.assertNotIn(self.art_event.id, rec_ids)
+
+        # In dashboard UI
+        self.client.login(username='pro_jam_user', password='password123')
+        resp = self.client.get(reverse('events:user_dashboard'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Bandra Sunset Acoustic Jam")
+        self.assertNotContains(resp, "Bangalore Tech Hackathon 2026")
+
+    def test_same_role_different_interests_receives_different_recommendations(self):
+        """Two students with different interests receive strictly different recommendations."""
+        from events.services import get_recommended_events_for_user
+        self.assertEqual(self.user_a.profile.profile_type, 'student')
+        self.assertEqual(self.user_c.profile.profile_type, 'student')
+
+        recs_a, _, _ = get_recommended_events_for_user(self.user_a)
+        recs_c, _, _ = get_recommended_events_for_user(self.user_c)
+
+        recs_a_ids = {e.id for e in recs_a}
+        recs_c_ids = {e.id for e in recs_c}
+
+        self.assertIn(self.tech_event.id, recs_a_ids)
+        self.assertNotIn(self.tech_event.id, recs_c_ids)
+
+        self.assertIn(self.music_event.id, recs_c_ids)
+        self.assertNotIn(self.music_event.id, recs_a_ids)
+
+    def test_different_roles_same_interests_shares_recommendations(self):
+        """Role does NOT stereotype: Student and Working Professional with Jamming share recommendations."""
+        from events.services import get_recommended_events_for_user
+        self.assertEqual(self.user_b.profile.profile_type, 'professional')
+        self.assertEqual(self.user_c.profile.profile_type, 'student')
+
+        recs_b, _, _ = get_recommended_events_for_user(self.user_b)
+        recs_c, _, _ = get_recommended_events_for_user(self.user_c)
+
+        self.assertIn(self.music_event.id, [e.id for e in recs_b])
+        self.assertIn(self.music_event.id, [e.id for e in recs_c])
+
+    def test_no_matching_records_produces_honest_empty_state(self):
+        """When no matching records exist (Sports & Outdoor with 0 DB items), dashboard shows honest empty state."""
+        from events.services import get_recommended_events_for_user
+        recs, ints, status = get_recommended_events_for_user(self.user_d)
+        self.assertEqual(status, 'no_matches')
+        self.assertEqual(recs, [])
+        self.assertIn('Sports & Outdoor', ints)
+
+        # Dashboard UI displays honest empty state and browse catalog link
+        self.client.login(username='pro_sports_only', password='password123')
+        resp = self.client.get(reverse('events:user_dashboard'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "No matching events available yet")
+        self.assertContains(resp, "Browse All Events")
+        # Never silently present unrelated tech or music events
+        self.assertNotContains(resp, "Bangalore Tech Hackathon 2026")
+        self.assertNotContains(resp, "Bandra Sunset Acoustic Jam")
+
+    def test_profile_interest_update_refreshes_recommendations_immediately(self):
+        """Updating user interests immediately refreshes dashboard recommendations."""
+        self.client.login(username='student_tech_user', password='password123')
+
+        # Initially shows tech
+        resp_before = self.client.get(reverse('events:user_dashboard'))
+        self.assertContains(resp_before, "Bangalore Tech Hackathon 2026")
+        self.assertNotContains(resp_before, "Bandra Sunset Acoustic Jam")
+
+        # Update interests to Live Music via POST to interests view
+        resp_update = self.client.post(
+            reverse('accounts:interests'),
+            {'selected_interests': ['Live Music & Jam']},
+            follow=True
+        )
+        self.assertEqual(resp_update.status_code, 200)
+
+        # Now dashboard shows music, not tech
+        resp_after = self.client.get(reverse('events:user_dashboard'))
+        self.assertContains(resp_after, "Bandra Sunset Acoustic Jam")
+        self.assertNotContains(resp_after, "Bangalore Tech Hackathon 2026")
+
+    def test_account_switching_does_not_leak_recommendations(self):
+        """Logging out and logging in as another user never leaks or reuses recommendations."""
+        # 1. Login as Student (Tech)
+        self.client.login(username='student_tech_user', password='password123')
+        resp_a = self.client.get(reverse('events:user_dashboard'))
+        self.assertContains(resp_a, "Bangalore Tech Hackathon 2026")
+        self.assertNotContains(resp_a, "Bandra Sunset Acoustic Jam")
+
+        # 2. Logout
+        self.client.post(reverse('accounts:logout'))
+
+        # 3. Login as Working Professional (Jamming)
+        self.client.login(username='pro_jam_user', password='password123')
+        resp_b = self.client.get(reverse('events:user_dashboard'))
+        self.assertContains(resp_b, "Bandra Sunset Acoustic Jam")
+        self.assertNotContains(resp_b, "Bangalore Tech Hackathon 2026")
+
+    def test_background_sync_does_not_replace_personalized_feed_with_global(self):
+        """Sync status checks preserve the user dashboard's personalized results without replacing them with the global catalog."""
+        self.client.login(username='student_tech_user', password='password123')
+
+        # Trigger sync status check (AJAX)
+        resp_sync = self.client.get(reverse('events:sync_status_api'))
+        self.assertEqual(resp_sync.status_code, 200)
+
+        # Dashboard remains personalized
+        resp_dash = self.client.get(reverse('events:user_dashboard'))
+        self.assertEqual(resp_dash.status_code, 200)
+        self.assertContains(resp_dash, "Bangalore Tech Hackathon 2026")
+        self.assertNotContains(resp_dash, "Bandra Sunset Acoustic Jam")
+
+    def test_recommendation_cards_do_not_auto_enroll_user(self):
+        """Viewing recommendations does NOT auto-enroll the user; enrolling requires explicit user action."""
+        self.client.login(username='student_tech_user', password='password123')
+        resp = self.client.get(reverse('events:user_dashboard'))
+        self.assertEqual(resp.status_code, 200)
+
+        # Confirm 0 enrollments created
+        enrollment_count = EventEnrollment.objects.filter(user=self.user_a).count()
+        self.assertEqual(enrollment_count, 0)
+
+        # Explicit enrollment
+        resp_enroll = self.client.post(reverse('events:event_enroll', kwargs={'slug': self.tech_event.slug}), follow=True)
+        self.assertEqual(resp_enroll.status_code, 200)
+        self.assertTrue(EventEnrollment.objects.filter(user=self.user_a, event=self.tech_event, status='confirmed').exists())
+
+        # Once confirmed enrolled, the event is excluded from recommendations to keep recommendations fresh
+        from events.services import get_recommended_events_for_user
+        recs, _, _ = get_recommended_events_for_user(self.user_a)
+        self.assertNotIn(self.tech_event.id, [e.id for e in recs])
+
+    def test_background_completion_refreshes_personalized_recommendations_with_new_arrival(self):
+        """Newly arrived records from background sync immediately refresh and appear in personalized recommendations."""
+        self.client.login(username='student_tech_user', password='password123')
+
+        # 1. Initial dashboard shows initial tech event
+        resp_init = self.client.get(reverse('events:user_dashboard'))
+        self.assertContains(resp_init, "Bangalore Tech Hackathon 2026")
+        self.assertNotContains(resp_init, "Autonomous AI Agent Hackathon 2026")
+
+        # 2. Background sync completes and auto-publishes a new matching external event
+        new_tech_event = Event.objects.create(
+            title="Autonomous AI Agent Hackathon 2026",
+            category=self.cat_tech,
+            description="Build autonomous agent workflows with real-time feedback.",
+            start_datetime=self.now + timedelta(days=6),
+            end_datetime=self.now + timedelta(days=6, hours=8),
+            city="Bengaluru",
+            venue_name="AI Campus",
+            submitted_by=self.admin,
+            source_type="external",
+            review_status="approved",
+            event_status="scheduled",
+            is_free=True,
+        )
+
+        # 3. User dashboard refresh immediately reflects the newly arrived event in their personalized feed
+        resp_refreshed = self.client.get(reverse('events:user_dashboard'))
+        self.assertEqual(resp_refreshed.status_code, 200)
+        self.assertContains(resp_refreshed, "Autonomous AI Agent Hackathon 2026")
+
+        # 4. Profile B (Jamming) does NOT receive the new tech event
+        self.client.logout()
+        self.client.login(username='pro_jam_user', password='password123')
+        resp_b = self.client.get(reverse('events:user_dashboard'))
+        self.assertContains(resp_b, "Bandra Sunset Acoustic Jam")
+        self.assertNotContains(resp_b, "Autonomous AI Agent Hackathon 2026")

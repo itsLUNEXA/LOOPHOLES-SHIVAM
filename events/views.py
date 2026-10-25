@@ -10,7 +10,7 @@ from django.http import Http404, JsonResponse
 
 from .models import Event, WhatsAppSubmission, Category, EventEnrollment
 from .forms import EventForm, WhatsAppEventSubmissionForm
-from .services import trigger_visitor_entry_refresh, get_sync_status_summary
+from .services import trigger_visitor_entry_refresh, get_sync_status_summary, get_recommended_events_for_user
 from accounts.models import UserProfile
 
 
@@ -321,6 +321,9 @@ def user_dashboard(request):
     # Compact red reminder is the nearest future deadline
     nearest_deadline = deadlines_list[0] if deadlines_list else None
 
+    # Recommendations based strictly on user's explicit profile interests
+    recommended_events, user_interests, rec_status = get_recommended_events_for_user(request.user)
+
     return render(request, 'events/user_dashboard.html', {
         'profile': profile,
         'all_enrollments': all_enrollments,
@@ -328,6 +331,9 @@ def user_dashboard(request):
         'upcoming_events': upcoming_events,
         'deadlines_list': deadlines_list,
         'nearest_deadline': nearest_deadline,
+        'recommended_events': recommended_events,
+        'user_interests': user_interests,
+        'recommendation_status': rec_status,
     })
 
 

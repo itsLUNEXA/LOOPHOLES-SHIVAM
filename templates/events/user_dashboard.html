@@ -340,18 +340,131 @@
         </div>
       </div>
 
-      <!-- Section: Explore Events CTA -->
-      <div class="card border-0 rounded-4 shadow-sm p-4 p-md-5 text-center bg-light" id="explore-events">
-        <h2 class="h5 fw-bold text-dark mb-2">
-          <i class="bi bi-compass text-primary me-2"></i>Explore Events
-        </h2>
-        <p class="text-muted small mx-auto mb-4" style="max-width: 500px;">
-          Discover hackathons, community meetups, and developer workshops across your city. Use keyword searches and smart category filters to find your next gathering.
-        </p>
-        <div class="d-flex justify-content-center">
-          <a href="{% url 'events:event_list' %}" class="btn btn-primary rounded-pill px-4 py-2 shadow-sm fw-semibold">
-            <i class="bi bi-search me-1"></i> Browse Event Discovery Catalog
+      <!-- Section: Explore Events / Personalized Recommendations -->
+      <div class="card border rounded-4 shadow-sm bg-white mb-4" id="explore-events">
+        <div class="card-header bg-white border-bottom py-3 px-4 d-flex flex-wrap align-items-center justify-content-between gap-2">
+          <div>
+            <h2 class="h6 fw-bold text-dark mb-1">
+              <i class="bi bi-compass text-primary me-2"></i>Explore Events &mdash; Recommended for You
+            </h2>
+            <div class="d-flex flex-wrap align-items-center gap-1 small text-muted">
+              <span>Based on your interests:</span>
+              {% for interest in user_interests %}
+                <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill">{{ interest }}</span>
+              {% empty %}
+                <span class="fst-italic">None selected yet</span>
+              {% endfor %}
+            </div>
+          </div>
+          <a href="{% url 'events:event_list' %}" class="btn btn-sm btn-outline-primary rounded-pill px-3 fw-semibold">
+            <i class="bi bi-grid me-1"></i> Browse All Events
           </a>
+        </div>
+
+        <div class="card-body p-4">
+          {% if recommendation_status == 'matched' %}
+            <div class="row row-cols-1 row-cols-md-2 g-3">
+              {% for rec in recommended_events %}
+                <div class="col">
+                  <div class="card h-100 border rounded-3 p-3 d-flex flex-column justify-content-between shadow-xs hover-card">
+                    <div>
+                      <div class="d-flex align-items-center justify-content-between mb-2">
+                        <span class="badge bg-light text-dark border rounded-pill small">
+                          {{ rec.category.name }}
+                        </span>
+                        {% if rec.source_type == 'whatsapp' %}
+                          <span class="badge badge-whatsapp-source rounded-pill small" title="WhatsApp submission">
+                            <i class="bi bi-whatsapp"></i> WhatsApp
+                          </span>
+                        {% elif rec.source_type == 'external' %}
+                          <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle rounded-pill small" title="Source: {{ rec.source.name|default:'Unstop' }}">
+                            <i class="bi bi-box-arrow-up-right me-1"></i> Source: {{ rec.source.name|default:"Unstop"|truncatechars:14 }}
+                          </span>
+                        {% else %}
+                          <span class="badge badge-organizer-source rounded-pill small">
+                            <i class="bi bi-patch-check"></i> Host
+                          </span>
+                        {% endif %}
+                      </div>
+
+                      <h3 class="h6 fw-bold mb-1">
+                        <a href="{{ rec.get_absolute_url }}" class="text-decoration-none text-dark">
+                          {{ rec.title }}
+                        </a>
+                      </h3>
+
+                      <div class="text-muted small mb-2">
+                        <i class="bi bi-calendar3 text-primary me-1"></i>{{ rec.start_datetime|date:"D, M d • h:i A" }}
+                        <span class="mx-1">&bull;</span>
+                        <i class="bi bi-geo-alt-fill text-danger me-1"></i>{{ rec.city|default:"Online" }}
+                      </div>
+
+                      <p class="text-muted small mb-3" style="display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;">
+                        {{ rec.description }}
+                      </p>
+                    </div>
+
+                    <div class="pt-2 border-top d-flex align-items-center justify-content-between">
+                      <span class="badge {% if rec.is_free %}bg-success-subtle text-success border border-success-subtle{% else %}bg-dark text-white{% endif %} rounded-pill">
+                        {% if rec.is_free %}Free{% else %}₹{{ rec.price }}{% endif %}
+                      </span>
+                      <div class="d-flex gap-2">
+                        <a href="{{ rec.get_absolute_url }}" class="btn btn-sm btn-outline-secondary rounded-pill px-3">
+                          Details
+                        </a>
+                        <form action="{% url 'events:event_enroll' slug=rec.slug %}" method="post" class="d-inline">
+                          {% csrf_token %}
+                          <input type="hidden" name="next" value="{% url 'events:user_dashboard' %}">
+                          <button type="submit" class="btn btn-sm btn-primary rounded-pill px-3 fw-semibold">
+                            Enroll
+                          </button>
+                        </form>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+
+          {% elif recommendation_status == 'no_matches' %}
+            <div class="text-center py-4 px-3">
+              <div class="d-inline-flex p-3 rounded-circle bg-light text-muted mb-3">
+                <i class="bi bi-inbox fs-2"></i>
+              </div>
+              <h3 class="h6 fw-bold text-dark mb-1">No matching events available yet</h3>
+              <p class="text-muted small mx-auto mb-3" style="max-width: 480px;">
+                We don't have any upcoming events matching your selected interests ({% for i in user_interests %}{{ i }}{% if not forloop.last %}, {% endif %}{% endfor %}) at the moment.
+              </p>
+              <div class="d-flex justify-content-center gap-2">
+                <a href="{% url 'accounts:profile' %}" class="btn btn-sm btn-outline-secondary rounded-pill px-3">
+                  <i class="bi bi-pencil-square me-1"></i> Update Interests
+                </a>
+                <a href="{% url 'events:event_list' %}" class="btn btn-sm btn-primary rounded-pill px-4">
+                  <i class="bi bi-compass me-1"></i> Browse All Events
+                </a>
+              </div>
+            </div>
+
+          {% else %}
+            <!-- no_interests -->
+            <div class="text-center py-4 px-3">
+              <div class="d-inline-flex p-3 rounded-circle bg-primary-subtle text-primary mb-3">
+                <i class="bi bi-tags fs-2"></i>
+              </div>
+              <h3 class="h6 fw-bold text-dark mb-1">Personalize Your Recommendations</h3>
+              <p class="text-muted small mx-auto mb-3" style="max-width: 480px;">
+                You haven't selected your interests yet. Choose the topics you care about to see personalized event recommendations here.
+              </p>
+              <div class="d-flex justify-content-center gap-2">
+                <a href="{% url 'accounts:interests' %}" class="btn btn-sm btn-primary rounded-pill px-4">
+                  <i class="bi bi-stars me-1"></i> Select Interests
+                </a>
+                <a href="{% url 'events:event_list' %}" class="btn btn-sm btn-outline-secondary rounded-pill px-3">
+                  Browse All Events
+                </a>
+              </div>
+            </div>
+          {% endif %}
         </div>
       </div>
 

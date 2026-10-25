@@ -10,9 +10,10 @@ import logging
 from datetime import timedelta
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import Q
 from django.contrib.auth.models import User
 
-from .models import EventSource, SyncRunHistory, Event
+from .models import EventSource, SyncRunHistory, Event, Category, EventEnrollment
 from .tinyfish import fetch_events_from_tinyfish, check_tinyfish_run_result, validate_and_import_events
 
 logger = logging.getLogger(__name__)
@@ -407,3 +408,213 @@ def get_sync_status_summary():
         'records_approved': records_created if auto_approve else 0,
         'error_message': last_history.error_message if last_history and last_history.status in ('FAILED', 'RATE_LIMITED') else None,
     }
+
+
+def map_interest_to_category_slugs(interest_str: str) -> list[str]:
+    """
+    Maps an interest string to matching event Category slugs.
+    Case-insensitive, handles standard choices, synonyms, and custom variations.
+    """
+    if not interest_str:
+        return []
+    clean = interest_str.lower().strip()
+    slugs = set()
+
+    # Exact and keyword mapping dictionary
+    mapping = {
+        # Technology & AI
+        'tech': ['technology-ai', 'tech-ai', 'technology', 'tech'],
+        'ai': ['technology-ai', 'tech-ai', 'technology', 'tech'],
+        'technology': ['technology-ai', 'tech-ai', 'technology', 'tech'],
+        'technology & ai': ['technology-ai', 'tech-ai', 'technology', 'tech'],
+        'software': ['technology-ai', 'tech-ai', 'technology', 'tech'],
+        'coding': ['technology-ai', 'tech-ai', 'technology', 'tech'],
+        'hackathon': ['technology-ai', 'tech-ai', 'technology', 'tech'],
+        'developer': ['technology-ai', 'tech-ai', 'technology', 'tech'],
+        'robotics': ['technology-ai', 'tech-ai', 'technology', 'tech'],
+        'data science': ['technology-ai', 'tech-ai', 'technology', 'tech'],
+        'machine learning': ['technology-ai', 'tech-ai', 'technology', 'tech'],
+
+        # Startups & Business
+        'startup': ['startups-business', 'startups', 'business'],
+        'startups': ['startups-business', 'startups', 'business'],
+        'startups & business': ['startups-business', 'startups', 'business'],
+        'business': ['startups-business', 'startups', 'business'],
+        'entrepreneur': ['startups-business', 'startups', 'business'],
+        'entrepreneurship': ['startups-business', 'startups', 'business'],
+        'founder': ['startups-business', 'startups', 'business'],
+        'finance': ['startups-business', 'startups', 'business'],
+        'economics': ['startups-business', 'startups', 'business'],
+
+        # Live Music & Jam
+        'music': ['music-live-jam', 'live-music', 'music'],
+        'live music': ['music-live-jam', 'live-music', 'music'],
+        'live music & jam': ['music-live-jam', 'live-music', 'music'],
+        'jam': ['music-live-jam', 'live-music', 'music'],
+        'jamming': ['music-live-jam', 'live-music', 'music'],
+        'acoustic': ['music-live-jam', 'live-music', 'music'],
+        'concert': ['music-live-jam', 'live-music', 'music'],
+        'band': ['music-live-jam', 'live-music', 'music'],
+        'singing': ['music-live-jam', 'live-music', 'music'],
+
+        # Design & Creative Arts / Arts & Crafts
+        'art': ['arts-crafts', 'arts'],
+        'arts': ['arts-crafts', 'arts'],
+        'craft': ['arts-crafts', 'arts'],
+        'crafts': ['arts-crafts', 'arts'],
+        'arts & crafts': ['arts-crafts', 'arts'],
+        'design & creative arts': ['arts-crafts', 'arts'],
+        'design': ['arts-crafts', 'arts'],
+        'pottery': ['arts-crafts', 'arts'],
+        'painting': ['arts-crafts', 'arts'],
+        'sketching': ['arts-crafts', 'arts'],
+
+        # Books & Literature
+        'book': ['books-literature', 'books'],
+        'books': ['books-literature', 'books'],
+        'books & literature': ['books-literature', 'books'],
+        'literature': ['books-literature', 'books'],
+        'reading': ['books-literature', 'books'],
+        'poetry': ['books-literature', 'books'],
+        'writing': ['books-literature', 'books'],
+
+        # Community & Social
+        'community': ['community-social', 'community'],
+        'social': ['community-social', 'community'],
+        'community & social': ['community-social', 'community'],
+        'meetup': ['community-social', 'community'],
+        'quizzes': ['community-social', 'community'],
+        'quiz': ['community-social', 'community'],
+        'treasure hunt': ['community-social', 'community'],
+        'escape room': ['community-social', 'community'],
+        'board game': ['community-social', 'community'],
+        'board games': ['community-social', 'community'],
+
+        # Gaming & Esports
+        'gaming': ['technology-ai', 'community-social'],
+        'esports': ['technology-ai', 'community-social'],
+        'gaming & esports': ['technology-ai', 'community-social'],
+
+        # Fitness & Outdoors / Sports
+        'sports': ['sports-outdoors', 'fitness-outdoors', 'sports'],
+        'sport': ['sports-outdoors', 'fitness-outdoors', 'sports'],
+        'sports & outdoor': ['sports-outdoors', 'fitness-outdoors', 'sports'],
+        'sports & outdoors': ['sports-outdoors', 'fitness-outdoors', 'sports'],
+        'fitness': ['sports-outdoors', 'fitness-outdoors'],
+        'fitness & outdoors': ['sports-outdoors', 'fitness-outdoors'],
+        'outdoor': ['sports-outdoors', 'fitness-outdoors'],
+        'outdoors': ['sports-outdoors', 'fitness-outdoors'],
+        'trek': ['sports-outdoors', 'fitness-outdoors'],
+        'trekking': ['sports-outdoors', 'fitness-outdoors'],
+        'running': ['sports-outdoors', 'fitness-outdoors'],
+        'marathon': ['sports-outdoors', 'fitness-outdoors'],
+        'football': ['sports-outdoors', 'fitness-outdoors'],
+        'cricket': ['sports-outdoors', 'fitness-outdoors'],
+    }
+
+    for key, target_slugs in mapping.items():
+        if key == clean or key in clean or clean in key:
+            slugs.update(target_slugs)
+
+    # Dynamic match against Category names and slugs in database
+    for cat in Category.objects.all():
+        cname = cat.name.lower()
+        cslug = cat.slug.lower()
+        if cname == clean or cname in clean or clean in cname or cslug == clean or cslug in clean:
+            slugs.add(cat.slug)
+
+    return list(slugs)
+
+
+def get_recommended_events_for_user(user, limit=6):
+    """
+    Returns personalized upcoming event recommendations for a user based strictly
+    on their explicit profile interests.
+
+    Role does NOT dictate or stereotype interests.
+    Only published, eligible, scheduled upcoming events are returned.
+
+    Returns:
+        tuple (recommended_events, user_interests, status_code)
+        status_code:
+        - 'matched': Found matching published events
+        - 'no_matches': User has explicit interests, but no matching published events exist
+        - 'no_interests': User has no interests configured in their profile
+    """
+    if not user or not user.is_authenticated:
+        return [], [], 'no_interests'
+
+    profile = getattr(user, 'profile', None)
+    if not profile or not getattr(profile, 'interests', None) or not profile.interests.strip():
+        from accounts.models import UserProfile
+        profile = UserProfile.objects.filter(user=user).first()
+
+    if not profile or not profile.interests or not profile.interests.strip():
+        return [], [], 'no_interests'
+
+    user_interests = [i.strip() for i in profile.interests.split(',') if i.strip()]
+    if not user_interests:
+        return [], [], 'no_interests'
+
+    category_slugs = set()
+    keyword_q = Q()
+
+    for interest in user_interests:
+        slugs = map_interest_to_category_slugs(interest)
+        category_slugs.update(slugs)
+
+        clean = interest.lower().strip()
+        if len(clean) >= 3:
+            keyword_q |= Q(title__icontains=clean) | Q(description__icontains=clean)
+
+    # Base query for eligible published upcoming events
+    now = timezone.now()
+    today = timezone.localdate()
+    eligible_events = Event.objects.filter(
+        review_status='approved',
+        event_status='scheduled'
+    ).filter(
+        Q(end_datetime__gte=now) |
+        Q(end_datetime__isnull=True, start_datetime__gte=now) |
+        Q(end_datetime__isnull=True, start_datetime__date=today)
+    ).select_related('category', 'submitted_by', 'source')
+
+    # Exclude events the user is already confirmed enrolled in
+    enrolled_ids = EventEnrollment.objects.filter(
+        user=user,
+        status='confirmed'
+    ).values_list('event_id', flat=True)
+    if enrolled_ids:
+        eligible_events = eligible_events.exclude(id__in=enrolled_ids)
+
+    # Combined filter
+    matching_q = Q()
+    if category_slugs:
+        matching_q |= Q(category__slug__in=category_slugs)
+    if keyword_q:
+        matching_q |= keyword_q
+
+    if not matching_q:
+        return [], user_interests, 'no_matches'
+
+    matched_qs = eligible_events.filter(matching_q).distinct()
+
+    # Explainable ordering:
+    # 1. Preferred city first if specified
+    # 2. Soonest upcoming start_datetime first
+    if profile.preferred_city and profile.preferred_city.strip():
+        city_clean = profile.preferred_city.strip()
+        city_events = list(matched_qs.filter(city__iexact=city_clean).order_by('start_datetime')[:limit])
+        remaining = limit - len(city_events)
+        if remaining > 0:
+            other_events = list(matched_qs.exclude(city__iexact=city_clean).order_by('start_datetime')[:remaining])
+            recommended_events = city_events + other_events
+        else:
+            recommended_events = city_events
+    else:
+        recommended_events = list(matched_qs.order_by('start_datetime')[:limit])
+
+    if not recommended_events:
+        return [], user_interests, 'no_matches'
+
+    return recommended_events, user_interests, 'matched'
